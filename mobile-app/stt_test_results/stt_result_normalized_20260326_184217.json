@@ -1,0 +1,11 @@
+{
+  "label": "normalized",
+  "file": "report_1774518120569_normalized.wav",
+  "timestamp": "2026-03-26T18:42:17.896983",
+  "success": true,
+  "stt_text": "야 이 씨발놈아 너가 나한테 왜 그랬어",
+  "category": "unclassified",
+  "department": "민원봉사과",
+  "confidence": 0.2,
+  "error": null
+}

@@ -1,0 +1,11 @@
+{
+  "label": "normalized",
+  "file": "report_1774251583230_normalized.wav",
+  "timestamp": "2026-03-23T16:40:01.268951",
+  "success": true,
+  "stt_text": "반갑습니다. 제 이름은 윤낙준입니다.",
+  "category": "unclassified",
+  "department": "민원봉사과",
+  "confidence": 0.1,
+  "error": null
+}

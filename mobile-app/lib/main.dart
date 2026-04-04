@@ -4,9 +4,16 @@ import 'package:geolocator/geolocator.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:dio/dio.dart';
 import 'dart:io';
-import 'dart:async'; // VAD 타이머 및 스트림 처리를 위해 추가
+import 'dart:async';
+import 'dart:convert';
 import 'services/audio_normalizer.dart';
+
+// ────────────────────────────────────────────────
+// 에뮬레이터에서 PC 호스트(localhost)를 가리키는 주소
+// ────────────────────────────────────────────────
+const String _kServerUrl = 'http://10.0.2.2:8000';
 
 void main() {
   runApp(const MyApp());
@@ -46,6 +53,10 @@ class _MainScreenState extends State<MainScreen> {
   String? _filePath;
   String? _normalizedFilePath;
   bool _isNormalizing = false;
+
+  // STT 전송 상태
+  bool _isSendingSTT = false;
+  String? _sttSavedDir; // JSON 저장 디렉토리 경로 (결과 안내용)
 
   // VAD(침묵 감지)를 위한 변수들
   StreamSubscription<Amplitude>? _amplitudeSub;
@@ -210,8 +221,8 @@ class _MainScreenState extends State<MainScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(normalizedPath != null
-                ? '음성 정규화 완료! 원본/정규화 재생을 비교해보세요.'
-                : '정규화 실패 — 원본 파일로 진행합니다.'),
+                ? '음성 정규화 완료! STT 서버로 전송 중...'
+                : '정규화 실패 — 원본 파일로 STT 진행합니다.'),
           ),
         );
       }
@@ -219,31 +230,168 @@ class _MainScreenState extends State<MainScreen> {
       setState(() => _isNormalizing = false);
     }
 
-    // 녹음이 완료되면 FastAPI로 스트리밍 전송 시작
-    _streamToFastAPI(path);
+    // 녹음 완료 → STT 테스트 전송 (원본 & 정규화 파일 각각)
+    _runSttTests(originalPath: path, normalizedPath: _normalizedFilePath);
   }
 
-  // 🚀 3. FastAPI 스트리밍 전송 로직 (뼈대)
-  void _streamToFastAPI(String? path) {
-    if (path == null) return;
-    
-    final file = File(path);
-    final stream = file.openRead(); // 파일을 한 번에 읽지 않고 스트림으로 조각내서 읽음
+  // ─────────────────────────────────────────────────────────
+  // 🚀 3. STT: 정규화 파일 우선 전송
+  //         (정규화 실패 시 원본 파일로 폴백)
+  // ─────────────────────────────────────────────────────────
+  Future<void> _runSttTests({
+    required String? originalPath,
+    required String? normalizedPath,
+  }) async {
+    if (originalPath == null) return;
 
-    print("FastAPI로 전송을 시작합니다: $path");
-    
-    stream.listen(
-      (List<int> chunk) {
-        // TODO: 여기서 WebSocket이나 HTTP Chunked 방식으로 서버에 데이터를 쏩니다.
-        // 예: webSocket.add(chunk);
-        print("전송 중... 청크 크기: ${chunk.length} bytes");
-      },
-      onDone: () {
-        print("FastAPI 전송이 완료되었습니다.");
-      },
-      onError: (e) {
-        print("스트리밍 전송 에러: $e");
-      }
+    setState(() => _isSendingSTT = true);
+
+    final directory = await getApplicationDocumentsDirectory();
+    _sttSavedDir = directory.path;
+
+    final timestamp = DateTime.now()
+        .toIso8601String()
+        .replaceAll(':', '-')
+        .substring(0, 19);
+
+    // 정규화 파일 우선, 없으면 원본 사용
+    final filePath = normalizedPath ?? originalPath;
+    final label = normalizedPath != null ? 'normalized' : 'original';
+
+    final result = await _sendAudioToSTT(
+      filePath: filePath,
+      label: label,
+    );
+    await _saveResultJson(
+      result: result,
+      label: label,
+      filePath: filePath,
+      timestamp: timestamp,
+      saveDir: directory.path,
+    );
+
+    setState(() => _isSendingSTT = false);
+
+    if (mounted) {
+      _showSttResultDialog(
+        result: result,
+        label: label,
+        savedDir: directory.path,
+        timestamp: timestamp,
+      );
+    }
+  }
+
+  /// 음성 파일을 /upload-audio 로 전송하고 STT 결과 Map 반환
+  Future<Map<String, dynamic>> _sendAudioToSTT({
+    required String filePath,
+    required String label,
+  }) async {
+    try {
+      final dio = Dio();
+      final fileName = filePath.split('/').last;
+
+      final formData = FormData.fromMap({
+        'file': await MultipartFile.fromFile(
+          filePath,
+          filename: fileName,
+        ),
+        'lat': '37.0', // 테스트용 임시 좌표
+        'lng': '127.0',
+      });
+
+      print('[STT-$label] 전송 시작: $filePath');
+      final response = await dio.post(
+        '$_kServerUrl/upload-audio',
+        data: formData,
+        options: Options(receiveTimeout: const Duration(seconds: 60)),
+      );
+
+      print('[STT-$label] 응답: ${response.data}');
+      return Map<String, dynamic>.from(response.data as Map);
+    } catch (e) {
+      print('[STT-$label] 전송 실패: $e');
+      return {
+        'success': false,
+        'stt_text': '',
+        'error': e.toString(),
+      };
+    }
+  }
+
+  /// STT 결과를 JSON 파일로 저장
+  Future<void> _saveResultJson({
+    required Map<String, dynamic> result,
+    required String label,
+    required String filePath,
+    required String timestamp,
+    required String saveDir,
+  }) async {
+    final payload = {
+      'label': label,
+      'file': filePath.split('/').last,
+      'timestamp': timestamp,
+      'success': result['success'],
+      'stt_text': result['stt_text'] ?? '',
+      'category': result['report']?['category'],
+      'department': result['report']?['department'],
+      'error': result['error'],
+    };
+
+    final jsonStr = const JsonEncoder.withIndent('  ').convert(payload);
+    final savePath = '$saveDir/stt_result_${label}_$timestamp.json';
+    await File(savePath).writeAsString(jsonStr, flush: true);
+    print('[STT-$label] JSON 저장 완료: $savePath');
+  }
+
+  /// STT 결과 다이얼로그 표시
+  void _showSttResultDialog({
+    required Map<String, dynamic>? result,
+    required String label,
+    required String savedDir,
+    required String timestamp,
+  }) {
+    final text = result?['stt_text'] ?? '(없음)';
+    final ok = result?['success'] == true;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('🎙️ STT 결과', style: TextStyle(fontWeight: FontWeight.bold)),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label == 'normalized' ? '📂 정규화 파일' : '📂 원본 파일 (정규화 실패)',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: label == 'normalized' ? Colors.deepPurple : Colors.orange,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                ok ? text : '❌ 실패: ${result?["error"]}',
+                style: TextStyle(color: ok ? Colors.black87 : Colors.red),
+              ),
+              const Divider(height: 24),
+              const Text('💾 JSON 저장 경로', style: TextStyle(fontSize: 11, color: Colors.grey)),
+              const SizedBox(height: 4),
+              Text(
+                '$savedDir/stt_result_${label}_$timestamp.json',
+                style: const TextStyle(fontSize: 10, color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('확인'),
+          ),
+        ],
+      ),
     );
   }
 

@@ -1,0 +1,11 @@
+{
+  "label": "normalized",
+  "file": "report_1774252360731_normalized.wav",
+  "timestamp": "2026-03-23T16:52:56.070423",
+  "success": true,
+  "stt_text": "반갑습니다. 제 이름은 윤관입니다. 만나서 반갑습니다.",
+  "category": "unclassified",
+  "department": "민원봉사과",
+  "confidence": 0.1,
+  "error": null
+}

@@ -25,7 +25,7 @@ async def transcribe_audio(file_path: str) -> dict:
         # Whisper API 호출 (한국어 최적화)
         with open(file_path, "rb") as audio_file:
             transcript = client.audio.transcriptions.create(
-                model="whisper-large-v3-turbo",
+                model="whisper-1",
                 file=audio_file,
                 language="ko",  # 한국어 인식 최적화
                 response_format="text"

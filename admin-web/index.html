@@ -1,127 +1,18 @@
 <!DOCTYPE html>
-<html>
+<html lang="ko">
+
 <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>춘천시 민원 관리 대시보드</title>
-    <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=c33b9651ab3b9c230db46b4019c300d3"></script>
-    <style>
-        body { margin: 0; font-family: 'Malgun Gothic', sans-serif; background: #f4f7f6; }
-        .header { padding: 15px 25px; background: #2c3e50; color: white; display: flex; justify-content: space-between; align-items: center; }
-        .main-container { display: flex; height: calc(100vh - 70px); }
-        #map { flex: 2; height: 100%; border-right: 1px solid #ddd; }
-        .sidebar { flex: 1; display: flex; flex-direction: column; background: #fff; }
-        .sub-list { flex: 1; padding: 20px; overflow-y: auto; border-bottom: 2px solid #eee; }
-        .sub-list h3 { margin-top: 0; color: #34495e; border-left: 5px solid #3498db; padding-left: 10px; font-size: 18px; }
-        .report-item { background: #fff; padding: 15px; margin-bottom: 12px; border: 1px solid #e0e0e0; border-radius: 8px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        .report-item:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); border-color: #3498db; }
-        .category-tag { display: inline-block; padding: 3px 8px; font-size: 11px; font-weight: bold; border-radius: 4px; color: white; margin-bottom: 8px; text-transform: uppercase; }
-        .resolve-btn { margin-top: 10px; width: 100%; padding: 8px; background: #27ae60; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; transition: background 0.3s; }
-        .resolve-btn:hover { background: #2ecc71; }
-        .resolved-time { font-size: 12px; color: #95a5a6; margin-top: 8px; }
-    </style>
+    <!-- Vite에서는 env 값을 %변수명% 으로 html에 주입할 수 있습니다 -->
+    <script type="text/javascript"
+        src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=%VITE_KAKAO_MAP_API_KEY%&autoload=false"></script>
 </head>
+
 <body>
-    <div class="header">
-        <h1>민원 통합 관리 시스템</h1>
-        
-    </div>
-    <div class="main-container">
-        <div id="map"></div>
-        <div class="sidebar">
-            <div class="sub-list" id="pending-list">
-                <h3>🔔 대기 중인 민원</h3>
-            </div>
-            <div class="sub-list" id="completed-list">
-                <h3>✅ 처리 완료 (10일 후 삭제)</h3>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        var mapContainer = document.getElementById('map');
-        var mapOption = { center: new kakao.maps.LatLng(37.8813, 127.7298), level: 3 };
-        var map = new kakao.maps.Map(mapContainer, mapOption);
-
-        // 빨간색 마커 이미지만 정의합니다. (파란색은 기본 사용)
-        var redSrc = 'https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/marker_red.png';
-        var mSize = new kakao.maps.Size(31, 35);
-        var redImg = new kakao.maps.MarkerImage(redSrc, mSize);
-
-        var markers = [];
-        var markerStore = {};
-
-        function loadReports() {
-            fetch('http://127.0.0.1:8000/get-reports')
-                .then(res => res.json())
-                .then(data => {
-                    document.getElementById('pending-list').innerHTML = '<h3>🔔 대기 중인 민원</h3>';
-                    document.getElementById('completed-list').innerHTML = '<h3>✅ 처리 완료 (10일 후 삭제)</h3>';
-                    markers.forEach(m => m.setMap(null));
-                    markers = [];
-                    markerStore = {};
-
-                    data.forEach(report => {
-                        var markerPos = new kakao.maps.LatLng(report.lat, report.lng);
-                        
-                        if (report.status === 'pending') {
-                            var marker = new kakao.maps.Marker({
-                                position: markerPos
-                                // image 속성을 생략하면 기본 파란색 마커가 됩니다.
-                            });
-                            marker.setMap(map);
-                            markers.push(marker);
-                            markerStore[report.id] = marker;
-
-                            var iw = new kakao.maps.InfoWindow({ content: `<div style="padding:5px;font-size:12px;">${report.title}</div>` });
-                            kakao.maps.event.addListener(marker, 'mouseover', () => iw.open(map, marker));
-                            kakao.maps.event.addListener(marker, 'mouseout', () => iw.close());
-                        }
-
-                        const item = document.createElement('div');
-                        item.className = 'report-item';
-                        const bgColor = report.category === 'repair' ? '#e74c3c' : '#f1c40f';
-                        
-                        let html = `
-                            <span class="category-tag" style="background:${bgColor}">${report.category === 'repair' ? '파손/수리' : '건의사항'}</span>
-                            <div style="font-weight:bold; font-size:15px;">${report.title}</div>
-                        `;
-
-                        if (report.status === 'pending') {
-                            html += `<button class="resolve-btn" onclick="resolveReport(${report.id}, event)">처리 완료</button>`;
-                            document.getElementById('pending-list').appendChild(item);
-                        } else {
-                            html += `<div class="resolved-time">해결 시각: ${report.resolved_at}</div>`;
-                            document.getElementById('completed-list').appendChild(item);
-                        }
-                        item.innerHTML = html;
-
-                        // [수정됨] 마우스 호버 시 빨간색 변경 로직
-                        item.onmouseenter = () => { 
-                            if(markerStore[report.id]) {
-                                markerStore[report.id].setImage(redImg); // 빨간색으로 변경
-                                markerStore[report.id].setZIndex(3); // 맨 앞으로 가져오기
-                            }
-                        };
-                        // [수정됨] 마우스 뗐을 때 기본 마커로 복귀 로직
-                        item.onmouseleave = () => { 
-                            if(markerStore[report.id]) {
-                                markerStore[report.id].setImage(null); // null을 넣으면 기본(파란색)으로 돌아갑니다.
-                                markerStore[report.id].setZIndex(1); // 원래 순서로
-                            }
-                        };
-                        item.onclick = () => map.panTo(markerPos);
-                    });
-                });
-        }
-
-        function resolveReport(id, event) {
-            event.stopPropagation();
-            if(confirm("해당 민원을 처리 완료하시겠습니까?")) {
-                fetch(`http://127.0.0.1:8000/resolve-report/${id}`, { method: 'POST' })
-                    .then(() => loadReports());
-            }
-        }
-
-        loadReports();
-    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
 </body>
+
 </html>

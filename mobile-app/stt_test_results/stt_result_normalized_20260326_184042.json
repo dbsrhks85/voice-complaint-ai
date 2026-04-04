@@ -1,0 +1,11 @@
+{
+  "label": "normalized",
+  "file": "report_1774518021457_normalized.wav",
+  "timestamp": "2026-03-26T18:40:42.003623",
+  "success": true,
+  "stt_text": "그러면 그랬다면 차도연씨가 아닌 내가 남자가 되었을 수도 있겠구나.",
+  "category": "unclassified",
+  "department": "민원봉사과",
+  "confidence": 0.2,
+  "error": null
+}

@@ -1,0 +1,11 @@
+{
+  "label": "normalized",
+  "file": "report_1774518060348_normalized.wav",
+  "timestamp": "2026-03-26T18:41:31.610925",
+  "success": true,
+  "stt_text": "어젯밤 제가 집에 걸어갔는데요 오래오래 걸으면서 생각을 했거든요 김씨 찍고 싶다 내 인생이 어떤 프로그램이고 그 프로그램의 주인공이고 그래서 누군가가 나를 찍고 있다면 그렇다면 김씨 찍고 싶다 어디서부터 다시 해야할지 모르겠지만",
+  "category": "unclassified",
+  "department": "민원봉사과",
+  "confidence": 0.2,
+  "error": null
+}

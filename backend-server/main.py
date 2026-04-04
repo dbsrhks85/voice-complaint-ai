@@ -1,5 +1,6 @@
 # python -m uvicorn main:app --reload 로 서버를 항시 켜둘 수 있음(터미널에서 명령어 입력)
 import os
+import json
 import shutil
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +29,10 @@ app.add_middleware(
 # 업로드 디렉토리 경로
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# ✅ STT 결과 JSON 저장 폴더 (PC에서 바로 확인 가능)
+STT_RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "mobile-app", "stt_test_results")
+os.makedirs(STT_RESULTS_DIR, exist_ok=True)
 
 # 자동 증가 ID 카운터
 next_id = 3
@@ -110,7 +115,7 @@ async def upload_audio(
     global next_id
 
     # 1단계: 음성 파일 저장
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     file_name = f"report_{timestamp}_{file.filename}"
     file_path = os.path.join(UPLOAD_DIR, file_name)
 
@@ -119,6 +124,24 @@ async def upload_audio(
 
     # 2단계: STT (음성 → 텍스트)
     stt_result = await transcribe_audio(file_path)
+
+    # ✅ STT 결과 JSON 저장 (성공/실패 모두) → uploads 폴더에 저장
+    label = "normalized" if file.filename and "normalized" in file.filename else "original"
+    stt_json_path = os.path.join(UPLOAD_DIR, f"stt_result_{label}_{timestamp}.json")
+    stt_payload = {
+        "label": label,
+        "file": file.filename,
+        "timestamp": datetime.now().isoformat(),
+        "success": stt_result["success"],
+        "stt_text": stt_result.get("text", ""),
+        "category": None,
+        "department": None,
+        "confidence": None,
+        "error": stt_result.get("error")
+    }
+    with open(stt_json_path, "w", encoding="utf-8") as f:
+        json.dump(stt_payload, f, ensure_ascii=False, indent=2)
+    print(f"[STT-JSON] 저장 완료: {stt_json_path}")
 
     if not stt_result["success"]:
         return {
@@ -159,6 +182,28 @@ async def upload_audio(
 
     reports.append(new_report)
     next_id += 1
+
+    # ✅ STT 결과를 PC의 mobile-app/stt_test_results/ 에 JSON으로 저장
+    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    label = "normalized" if file.filename and "normalized" in file.filename else "original"
+    stt_json_path = os.path.join(
+        STT_RESULTS_DIR,
+        f"stt_result_{label}_{timestamp_str}.json"
+    )
+    stt_payload = {
+        "label": label,
+        "file": file.filename,
+        "timestamp": datetime.now().isoformat(),
+        "success": True,
+        "stt_text": stt_text,
+        "category": nlp_result["category"],
+        "department": nlp_result["department"],
+        "confidence": nlp_result["confidence"],
+        "error": None
+    }
+    with open(stt_json_path, "w", encoding="utf-8") as f:
+        json.dump(stt_payload, f, ensure_ascii=False, indent=2)
+    print(f"[STT-JSON] 저장 완료: {stt_json_path}")
 
     return {
         "success": True,

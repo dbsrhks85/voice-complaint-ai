@@ -36,14 +36,12 @@ class AudioNormalizer {
       }
 
       // FFmpeg 명령어 구성
-      // 1) silenceremove: 앞뒤 무음 구간 제거 (임계값 -40dB)
-      // 2) loudnorm: EBU R128 표준 볼륨 정규화
-      // 3) -ar 16000: 샘플레이트 16kHz
-      // 4) -ac 1: 모노 채널
+      // 1) loudnorm: EBU R128 표준 볼륨 정규화
+      // 2) -ar 16000: 샘플레이트 16kHz
+      // 3) -ac 1: 모노 채널
+      // (기존의 silenceremove 필터가 문장 중간에 약간만 쉬어도 녹음을 완전히 잘라버리는 문제가 있어 제거)
       final command = '-i "$inputPath" '
-          '-af "silenceremove=start_periods=1:start_silence=0.3:start_threshold=-40dB:'
-          'stop_periods=1:stop_silence=0.3:stop_threshold=-40dB,'
-          'loudnorm=I=-16:TP=-1.5:LRA=11" '
+          '-af "loudnorm=I=-16:TP=-1.5:LRA=11" '
           '-ar 16000 -ac 1 '
           '-y "$outputPath"';
 

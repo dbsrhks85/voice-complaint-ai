@@ -1,0 +1,11 @@
+{
+  "label": "normalized",
+  "file": "report_1774767381049_normalized.wav",
+  "timestamp": "2026-03-29T15:56:59.453595",
+  "success": true,
+  "stt_text": "안녕하세요. 여기 보미동 16-8번길인데 여기 아스팔트에 포트홀이 생겼거든요. 이거 빨리 고쳐주셨으면 좋겠습니다. 감사합니다.",
+  "category": "repair",
+  "department": "시설관리과",
+  "confidence": 0.95,
+  "error": null
+}
