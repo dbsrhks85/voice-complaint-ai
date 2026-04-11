@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 
 from stt_engine import transcribe_audio
 from nlp_engine import classify_complaint
+from database import supabase
+from messages import ApiMessages
 
 load_dotenv()
 
@@ -34,19 +36,24 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # 없으면 자동 생성 (최초 로그인 처리)
 # ─────────────────────────────────────────
 def get_or_create_user(kakao_id: str, nickname: str = None) -> int:
-    result = supabase.table("users").select("id").eq("kakao_id", kakao_id).single().execute()
+    result = supabase.table("users").select("id").eq("kakao_id", kakao_id).execute()
 
-    if result.data:
-        return result.data["id"]
+    if result.data and len(result.data) > 0:
+        return result.data[0]["id"]
 
-    # 신규 유저 생성
-    new_user = supabase.table("users").insert({
+    # 신규 유저 생성 (다중/단일 입력 충돌 방지를 위해 리스트로 감쌈)
+    new_user = supabase.table("users").insert([{
         "kakao_id": kakao_id,
         "nickname": nickname or kakao_id,
-        "role": "user"
-    }).execute()
+        "role": "user",
+        "push_token": None,
+        "phone": None
+    }]).execute()
 
-    return new_user.data[0]["id"]
+    if new_user.data and len(new_user.data) > 0:
+        return new_user.data[0]["id"]
+        
+    raise Exception("User insertion failed: No data returned from Supabase.")
 
 
 # ─────────────────────────────────────────
@@ -80,11 +87,11 @@ def get_reports():
 @app.get("/get-reports/{kakao_id}")
 def get_my_reports(kakao_id: str):
     """특정 사용자의 민원만 조회"""
-    user_result = supabase.table("users").select("id").eq("kakao_id", kakao_id).single().execute()
-    if not user_result.data:
+    user_result = supabase.table("users").select("id").eq("kakao_id", kakao_id).execute()
+    if not user_result.data or len(user_result.data) == 0:
         return []
 
-    user_id = user_result.data["id"]
+    user_id = user_result.data[0]["id"]
     result = supabase.table("complaints").select(
         "id, title, stt_text, lat, lng, category, department, status, created_at, resolved_at"
     ).eq("user_id", user_id).order("created_at", desc=True).execute()
@@ -98,12 +105,19 @@ def get_my_reports(kakao_id: str):
 @app.post("/resolve-report/{report_id}")
 def resolve_report(report_id: int):
     """민원 처리 완료"""
-    for r in reports:
-        if r["id"] == report_id:
-            r["status"] = "completed"
-            r["resolved_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            return {"status": "success"}
-    return {"status": "error", "message": "해당 ID의 민원을 찾을 수 없습니다."}
+    try:
+        resolved_time = datetime.utcnow().isoformat()
+        result = supabase.table("complaints").update({
+            "status": "completed",
+            "resolved_at": resolved_time
+        }).eq("id", report_id).execute()
+        
+        if result.data:
+            return {"status": "success", "message": "민원이 처리 완료되었습니다."}
+        else:
+            return {"status": "error", "message": "해당 ID의 민원을 찾을 수 없거나 업데이트 오류가 발생했습니다."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DB 업데이트 중 오류: {str(e)}")
 
 
 # ─────────────────────────────────────────
@@ -148,7 +162,7 @@ async def upload_audio(
             "success": False,
             "step": "stt",
             "error": stt_result["error"],
-            "message": ApiMessages.STT_FAILED
+            "message": "음성 인식에 실패했습니다."
         }
 
     stt_text = stt_result["text"]
@@ -162,7 +176,7 @@ async def upload_audio(
             "step": "nlp",
             "stt_text": stt_text,
             "error": nlp_result["error"],
-            "message": ApiMessages.NLP_FAILED
+            "message": "텍스트 분류에 실패했습니다."
         }
 
     # ── 5. DB 저장
@@ -187,7 +201,7 @@ async def upload_audio(
     return {
         "success": True,
         "message": "민원이 성공적으로 접수되었습니다.",
-        "report": new_report,
+        "report": saved,
         "stt_text": stt_text
     }
 
