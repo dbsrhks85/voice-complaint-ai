@@ -17,7 +17,7 @@ class AppMessages {
   // ── 녹음 상태 메시지 (스낵바) ───────────────────────────
   static const String recordingAutoStop    = '말씀이 끝나서 자동으로 접수를 준비합니다.';
   static const String recordingManualStop  = '녹음이 완료되었습니다. 정규화 중...';
-  static const String normalizeSuccess     = '음성 정규화 완료! STT 서버로 전송 중...';
+  static const String normalizeSuccess     = '음성 정규화 완료! 인식 결과를 확인합니다...';
   static const String normalizeFailed      = '정규화 실패 — 원본 파일로 STT 진행합니다.';
 
   // ── 캐릭터 상태 메시지 (화면 중앙) ─────────────────────
@@ -46,4 +46,17 @@ class AppMessages {
   static const String analyzingBadge      = '분석 중';
   static const String mascotName          = '민원이';
   static const String mascotSubtitle      = 'AI 민원 도우미';
+
+  // ── STT 재확인 흐름 ─────────────────────────────────────
+  static const String sttConfirmTitle    = '이렇게 말씀하신 게 맞나요?';
+  static const String sttConfirmSubtitle = '아래 내용으로 민원을 접수합니다';
+  static const String sttConfirmYes      = '네, 접수할게요';
+  static const String sttConfirmNo       = '다시 녹음할게요';
+  static const String sttConfirmNoSnack  = '재녹음 모드로 돌아갑니다.';
+  static const String sttAnalyzing       = 'AI가 음성을 인식 중이에요...';
+  static const String sttSubmitting      = '민원을 접수하는 중이에요...';
+  static const String sttSubmitSuccess   = '민원이 정상적으로 접수되었어요! 😊';
+  static const String sttSubmitFailed    = '접수 중 오류가 발생했어요. 다시 시도해주세요.';
+  static const String sttFetchFailed     = '음성 인식에 실패했어요. 다시 녹음해주세요.';
+  static const String submittingBadge    = '접수 중';
 }

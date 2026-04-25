@@ -10,12 +10,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'services/audio_normalizer.dart';
 import 'constants.dart';
-
-// ────────────────────────────────────────────────
-// 에뮬레이터에서 PC 호스트(localhost)를 가리키는 주소
-// ────────────────────────────────────────────────
-const String _kServerUrl = 'http://10.0.2.2:8000';
-
+import 'config.dart'; // ← 서버 주소는 config.dart에서 관리 (git 제외)
 // ── Cloud Dancer 디자인 시스템 ──────────────────────
 class AppColors {
   // Cloud Dancer (PANTONE 11-4201 TCX) 기반 팔레트
@@ -83,6 +78,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   // STT 전송 상태
   bool _isSendingSTT = false;
   String? _sttSavedDir;
+
+  // STT 재확인 흐름을 위한 상태
+  bool _isSubmitting = false;       // NLP + DB 접수 처리 중 여부
+  Position? _currentPosition;       // 최신 GPS 위치 (민원 제출 시 활용)
 
   // VAD(침묵 감지)를 위한 변수들
   StreamSubscription<Amplitude>? _amplitudeSub;
@@ -184,6 +183,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         locationSettings: locationSettings,
       );
       setState(() {
+        _currentPosition = position;
         _locationMessage = "위도: ${position.latitude.toStringAsFixed(5)}\n경도: ${position.longitude.toStringAsFixed(5)}";
       });
     } catch (e) {
@@ -192,6 +192,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _toggleRecording() async {
+    if (_isSendingSTT || _isSubmitting) return; // 처리 중에는 새 녹음 불가
     if (_isRecording) {
       await _stopRecording(isAutoStopped: false);
     } else {
@@ -265,7 +266,11 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       setState(() => _isNormalizing = false);
     }
 
-    _runSttTests(originalPath: path, normalizedPath: _normalizedFilePath);
+    // 정규화 파일(없으면 원본)을 서버에 보내 STT 텍스트 추출
+    final fileToSend = _normalizedFilePath ?? path;
+    if (fileToSend != null && mounted) {
+      await _fetchSttOnly(filePath: fileToSend);
+    }
   }
 
   void _showSnack(String msg) {
@@ -280,227 +285,180 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     );
   }
 
-  Future<void> _runSttTests({
-    required String? originalPath,
-    required String? normalizedPath,
-  }) async {
-    if (originalPath == null) return;
-
+  // ──────────────────────────────────────────────────────────
+  // [Step 1]  /stt-only  →  STT 텍스트만 받아오기
+  // ──────────────────────────────────────────────────────────
+  Future<void> _fetchSttOnly({required String filePath}) async {
     setState(() => _isSendingSTT = true);
 
-    final directory = await getApplicationDocumentsDirectory();
-    _sttSavedDir = directory.path;
-
-    final timestamp = DateTime.now()
-        .toIso8601String()
-        .replaceAll(':', '-')
-        .substring(0, 19);
-
-    final filePath = normalizedPath ?? originalPath;
-    final label = normalizedPath != null ? 'normalized' : 'original';
-
-    final result = await _sendAudioToSTT(filePath: filePath, label: label);
-    await _saveResultJson(
-      result: result,
-      label: label,
-      filePath: filePath,
-      timestamp: timestamp,
-      saveDir: directory.path,
-    );
-
-    setState(() => _isSendingSTT = false);
-
-    if (mounted) {
-      _showSttResultDialog(
-        result: result,
-        label: label,
-        savedDir: directory.path,
-        timestamp: timestamp,
-      );
-    }
-  }
-
-  Future<Map<String, dynamic>> _sendAudioToSTT({
-    required String filePath,
-    required String label,
-  }) async {
     try {
       final dio = Dio();
       final fileName = filePath.split('/').last;
-
       final formData = FormData.fromMap({
         'file': await MultipartFile.fromFile(filePath, filename: fileName),
-        'lat': '37.0',
-        'lng': '127.0',
       });
 
       final response = await dio.post(
-        '$_kServerUrl/upload-audio',
+        '$_kServerUrl/stt-only',
         data: formData,
         options: Options(receiveTimeout: const Duration(seconds: 60)),
       );
 
-      return Map<String, dynamic>.from(response.data as Map);
+      final result = Map<String, dynamic>.from(response.data as Map);
+      setState(() => _isSendingSTT = false);
+
+      if (!mounted) return;
+
+      if (result['success'] == true) {
+        final sttText = result['stt_text'] as String? ?? '';
+        if (sttText.isEmpty) {
+          _showSnack(AppMessages.sttFetchFailed);
+          return;
+        }
+        _showSttConfirmBottomSheet(sttText: sttText);
+      } else {
+        _showSnack(result['error']?.toString() ?? AppMessages.sttFetchFailed);
+      }
     } catch (e) {
-      return {'success': false, 'stt_text': '', 'error': e.toString()};
+      setState(() => _isSendingSTT = false);
+      _showSnack(AppMessages.sttFetchFailed);
     }
   }
 
-  Future<void> _saveResultJson({
-    required Map<String, dynamic> result,
-    required String label,
-    required String filePath,
-    required String timestamp,
-    required String saveDir,
-  }) async {
-    final payload = {
-      'label': label,
-      'file': filePath.split('/').last,
-      'timestamp': timestamp,
-      'success': result['success'],
-      'stt_text': result['stt_text'] ?? '',
-      'category': result['report']?['category'],
-      'department': result['report']?['department'],
-      'error': result['error'],
-    };
-
-    final jsonStr = const JsonEncoder.withIndent('  ').convert(payload);
-    final savePath = '$saveDir/stt_result_${label}_$timestamp.json';
-    await File(savePath).writeAsString(jsonStr, flush: true);
-  }
-
-  void _showSttResultDialog({
-    required Map<String, dynamic>? result,
-    required String label,
-    required String savedDir,
-    required String timestamp,
-  }) {
-    final text = result?['stt_text'] ?? '(없음)';
-    final ok = result?['success'] == true;
-    final category = result?['report']?['category'] ?? result?['category'] ?? '-';
-    final department = result?['report']?['department'] ?? result?['department'] ?? '-';
-
-    showDialog(
+  // ──────────────────────────────────────────────────────────
+  // [Step 2]  바텀시트 — STT 결과 사용자 재확인
+  // ──────────────────────────────────────────────────────────
+  void _showSttConfirmBottomSheet({required String sttText}) {
+    showModalBottomSheet<void>(
       context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: AppColors.cloudSoft,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 헤더
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: ok ? AppColors.accentBlue.withOpacity(0.12) : AppColors.recordRed.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Icon(
-                      ok ? Icons.check_circle_outline : Icons.error_outline,
-                      color: ok ? AppColors.accentBlue : AppColors.recordRed,
-                      size: 22,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    'STT 결과',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textDark,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-
-              // STT 텍스트 영역
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: AppColors.cloudDancer,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.cloudDeep),
-                ),
-                child: Text(
-                  ok ? text : '오류: ${result?["error"]}',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: ok ? AppColors.textDark : AppColors.recordRed,
-                    height: 1.5,
-                  ),
-                ),
-              ),
-
-              if (ok) ...[
-                const SizedBox(height: 14),
-                // 분류 결과 칩
-                Row(
-                  children: [
-                    _infoChip(Icons.category_outlined, '분류', category, AppColors.accentBlue),
-                    const SizedBox(width: 8),
-                    _infoChip(Icons.business_outlined, '부서', department, AppColors.successGreen),
-                  ],
-                ),
-              ],
-
-              const SizedBox(height: 20),
-              // 저장 경로
-              Text(
-                '💾 $savedDir/stt_result_${label}_$timestamp.json',
-                style: const TextStyle(fontSize: 9, color: AppColors.textLight),
-              ),
-
-              const SizedBox(height: 20),
-              // 확인 버튼
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.accentBlue,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    elevation: 0,
-                  ),
-                  child: const Text('확인', style: TextStyle(fontWeight: FontWeight.w600)),
-                ),
-              ),
-            ],
-          ),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: AppColors.cloudSoft,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         ),
-      ),
-    );
-  }
-
-  Widget _infoChip(IconData icon, String label, String value, Color color) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: color.withOpacity(0.25)),
+        padding: EdgeInsets.fromLTRB(
+          24, 16, 24,
+          MediaQuery.of(ctx).viewInsets.bottom + 36,
         ),
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: color),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label, style: TextStyle(fontSize: 9, color: color, fontWeight: FontWeight.w600)),
-                  Text(value, style: TextStyle(fontSize: 12, color: AppColors.textDark, fontWeight: FontWeight.w500),
-                    overflow: TextOverflow.ellipsis),
-                ],
+            // 드래그 핸들
+            Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 24),
+              decoration: BoxDecoration(
+                color: AppColors.cloudDeep,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+
+            // 아이콘 원형 배지
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.accentBlue.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.hearing_outlined,
+                color: AppColors.accentBlue,
+                size: 30,
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // 제목
+            const Text(
+              AppMessages.sttConfirmTitle,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textDark,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              AppMessages.sttConfirmSubtitle,
+              style: TextStyle(fontSize: 13, color: AppColors.textMid),
+            ),
+            const SizedBox(height: 20),
+
+            // STT 변환 텍스트 카드
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                color: AppColors.cloudDancer,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.cloudDeep),
+              ),
+              child: Text(
+                '"$sttText"',
+                style: const TextStyle(
+                  fontSize: 15,
+                  color: AppColors.textDark,
+                  fontWeight: FontWeight.w500,
+                  height: 1.65,
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+
+            // ✅ 확인 버튼
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _submitComplaintWithText(sttText: sttText);
+                },
+                icon: const Icon(Icons.check_circle_outline, size: 20),
+                label: const Text(
+                  AppMessages.sttConfirmYes,
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accentBlue,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  elevation: 0,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // 🔄 재녹음 버튼
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  setState(() {
+                    _filePath = null;
+                    _normalizedFilePath = null;
+                  });
+                  _showSnack(AppMessages.sttConfirmNoSnack);
+                },
+                icon: const Icon(Icons.mic_outlined, size: 20),
+                label: const Text(
+                  AppMessages.sttConfirmNo,
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.textMid,
+                  side: const BorderSide(color: AppColors.cloudDeep, width: 1.5),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
               ),
             ),
           ],
@@ -508,6 +466,53 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       ),
     );
   }
+
+  // ──────────────────────────────────────────────────────────
+  // [Step 3]  /submit-complaint  →  NLP 분류 + DB 저장
+  // ──────────────────────────────────────────────────────────
+  Future<void> _submitComplaintWithText({required String sttText}) async {
+    setState(() => _isSubmitting = true);
+
+    final lat = _currentPosition?.latitude ?? 37.0;
+    final lng = _currentPosition?.longitude ?? 127.0;
+
+    try {
+      final dio = Dio();
+      final formData = FormData.fromMap({
+        'stt_text': sttText,
+        'lat': lat.toString(),
+        'lng': lng.toString(),
+        'kakao_id': 'anonymous',
+      });
+
+      final response = await dio.post(
+        '$_kServerUrl/submit-complaint',
+        data: formData,
+        options: Options(receiveTimeout: const Duration(seconds: 30)),
+      );
+
+      final result = Map<String, dynamic>.from(response.data as Map);
+
+      setState(() {
+        _isSubmitting = false;
+        _filePath = null;
+        _normalizedFilePath = null;
+      });
+
+      if (!mounted) return;
+
+      if (result['success'] == true) {
+        _showSnack(AppMessages.sttSubmitSuccess);
+      } else {
+        _showSnack(AppMessages.sttSubmitFailed);
+      }
+    } catch (e) {
+      setState(() => _isSubmitting = false);
+      _showSnack(AppMessages.sttSubmitFailed);
+    }
+  }
+
+
 
   Future<void> _playRecording() async {
     if (_filePath != null) {
@@ -624,8 +629,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             ),
           ),
           const Spacer(),
-          // STT 전송 중 인디케이터
-          if (_isSendingSTT)
+          // 처리 중 인디케이터 (STT 인식 중 / 민원 접수 중)
+          if (_isSendingSTT || _isSubmitting)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
@@ -633,10 +638,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: AppColors.accentBlue.withOpacity(0.3)),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  SizedBox(
+                  const SizedBox(
                     width: 12,
                     height: 12,
                     child: CircularProgressIndicator(
@@ -644,8 +649,17 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                       color: AppColors.accentBlue,
                     ),
                   ),
-                  SizedBox(width: 6),
-                  Text(AppMessages.analyzingBadge, style: TextStyle(fontSize: 11, color: AppColors.accentBlue, fontWeight: FontWeight.w600)),
+                  const SizedBox(width: 6),
+                  Text(
+                    _isSubmitting
+                        ? AppMessages.submittingBadge
+                        : AppMessages.analyzingBadge,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.accentBlue,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -709,14 +723,20 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                 const SizedBox(height: 10),
               ],
               Text(
-                _isRecording ? AppMessages.listeningMain : (_isSendingSTT ? AppMessages.analyzingMain : AppMessages.idleGuide),
+                _isRecording
+                    ? AppMessages.listeningMain
+                    : _isSendingSTT
+                        ? AppMessages.sttAnalyzing
+                        : _isSubmitting
+                            ? AppMessages.sttSubmitting
+                            : AppMessages.idleGuide,
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
                   color: _isRecording ? AppColors.recordRed : AppColors.textDark,
                 ),
               ),
-              if (!_isRecording && !_isSendingSTT)
+              if (!_isRecording && !_isSendingSTT && !_isSubmitting)
                 const Padding(
                   padding: EdgeInsets.only(top: 4),
                   child: Text(
@@ -832,7 +852,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               // 원본 재생 버튼
-              if (!_isRecording && _filePath != null)
+              if (!_isRecording && !_isSendingSTT && !_isSubmitting && _filePath != null)
                 _buildPlayButton(
                   onTap: _playRecording,
                   label: '원본',
@@ -841,17 +861,17 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                   size: 52,
                 ),
 
-              if (!_isRecording && _filePath != null)
+              if (!_isRecording && !_isSendingSTT && !_isSubmitting && _filePath != null)
                 const SizedBox(width: 16),
 
               // 메인 녹음 버튼
               _buildMainRecordButton(),
 
-              if (!_isRecording && _filePath != null)
+              if (!_isRecording && !_isSendingSTT && !_isSubmitting && _filePath != null)
                 const SizedBox(width: 16),
 
               // 정규화 재생 버튼
-              if (!_isRecording && _filePath != null)
+              if (!_isRecording && !_isSendingSTT && !_isSubmitting && _filePath != null)
                 _isNormalizing
                     ? _buildLoadingButton(size: 52)
                     : (_normalizedFilePath != null

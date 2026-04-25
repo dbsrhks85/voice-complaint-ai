@@ -279,6 +279,110 @@ async def register_user(
 
 
 # ─────────────────────────────────────────
+# POST /stt-only  —  STT만 실행 (텍스트 재확인용)
+# ─────────────────────────────────────────
+@app.post("/stt-only")
+async def stt_only(
+    file: UploadFile = File(..., description="음성 파일 (m4a, wav, mp3 등)")
+):
+    """
+    🎙️ STT 전용 API — NLP/DB 없이 텍스트만 반환
+    - 앱에서 사용자 재확인 후 /submit-complaint 호출
+    - 임시 음성 파일은 STT 처리 완료 즉시 삭제
+    """
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="파일 크기는 25MB를 초과할 수 없습니다.")
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    ext = os.path.splitext(file.filename or "")[-1].lower() or ".m4a"
+    file_name = f"stt_tmp_{timestamp}_{uuid.uuid4().hex}{ext}"
+    file_path = os.path.join(UPLOAD_DIR, file_name)
+
+    with open(file_path, "wb") as buffer:
+        buffer.write(content)
+
+    stt_result = await transcribe_audio(file_path)
+
+    if os.path.exists(file_path):
+        os.remove(file_path)  # 임시 파일 즉시 삭제
+
+    if not stt_result["success"]:
+        return {
+            "success": False,
+            "stt_text": "",
+            "error": stt_result["error"],
+            "message": ApiMessages.STT_FAILED
+        }
+
+    return {
+        "success": True,
+        "stt_text": stt_result["text"],
+        "message": "STT 변환 완료"
+    }
+
+
+# ─────────────────────────────────────────
+# POST /submit-complaint  —  NLP 분류 + DB 저장
+# ─────────────────────────────────────────
+@app.post("/submit-complaint")
+async def submit_complaint(
+    stt_text: str = Form(..., description="사용자가 확인한 STT 텍스트"),
+    lat: float = Form(..., description="위도 (GPS)"),
+    lng: float = Form(..., description="경도 (GPS)"),
+    kakao_id: str = Form(default="anonymous", description="카카오 로그인 ID"),
+    nickname: str = Form(default=None, description="카카오 닉네임 (선택)")
+):
+    """
+    ✅ 민원 최종 접수 API — 사용자가 STT 결과를 확인한 뒤 호출
+    1. GPT-4o mini → 카테고리 / 부서 분류
+    2. Supabase complaints 테이블에 저장
+    """
+    supabase = get_supabase()
+
+    try:
+        user_id = await get_or_create_user(kakao_id, nickname)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"사용자 처리 중 오류: {str(e)}")
+
+    nlp_result = await classify_complaint(stt_text)
+
+    if not nlp_result["success"]:
+        return {
+            "success": False,
+            "step": "nlp",
+            "stt_text": stt_text,
+            "error": nlp_result["error"],
+            "message": ApiMessages.NLP_FAILED,
+        }
+
+    new_complaint = {
+        "user_id":    user_id,
+        "stt_text":   stt_text,
+        "title":      nlp_result["title"],
+        "lat":        lat,
+        "lng":        lng,
+        "category":   nlp_result["category"],
+        "department": nlp_result["department"],
+        "status":     "pending",
+        "audio_path": None,
+    }
+
+    try:
+        db_result = await supabase.table("complaints").insert(new_complaint).execute()
+        saved = db_result.data[0]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DB 저장 중 오류: {str(e)}")
+
+    return {
+        "success": True,
+        "message": ApiMessages.REPORT_SUCCESS,
+        "report": saved,
+        "stt_text": stt_text,
+    }
+
+
+# ─────────────────────────────────────────
 # GET /health  —  서버 상태 확인
 # ─────────────────────────────────────────
 @app.get("/health")

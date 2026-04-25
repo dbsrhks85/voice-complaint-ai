@@ -27,3 +27,6 @@ Thumbs.db
 # ===== 업로드 파일 (음성 파일 등) =====
 backend-server/uploads/*
 !backend-server/uploads/.gitkeep
+
+# ===== Flutter 서버 주소 설정 (개인별 환경 다름) =====
+mobile-app/lib/config.dart
