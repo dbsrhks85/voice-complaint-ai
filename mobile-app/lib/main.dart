@@ -11,6 +11,8 @@ import 'dart:convert';
 import 'services/audio_normalizer.dart';
 import 'constants.dart';
 import 'config.dart'; // ← 서버 주소는 config.dart에서 관리 (git 제외)
+import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
+
 // ── Cloud Dancer 디자인 시스템 ──────────────────────
 class AppColors {
   // Cloud Dancer (PANTONE 11-4201 TCX) 기반 팔레트
@@ -32,7 +34,17 @@ class AppColors {
   static const Color textLight   = Color(0xFF9E9B93);   // 힌트 텍스트
 }
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // 카카오 SDK 초기화 (네이티브 키 & 자바스크립트 키 세팅)
+  KakaoSdk.init(
+    nativeAppKey: kKakaoNativeAppKey,
+    javaScriptAppKey: kKakaoMapApiKey,
+  );
+  
+  // [디버깅 코드 제거됨]
+  
   runApp(const MyApp());
 }
 
@@ -65,6 +77,12 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
+  final String _kServerUrl = kServerUrl; // config.dart에서 서버 주소 참조
+  
+  // 로그인 상태
+  bool _isLoggedIn = false;
+  User? _kakaoUser;
+
   String _locationMessage = AppMessages.locationLoading;
   bool _isRecording = false;
 
@@ -139,6 +157,33 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       _audioPlayer.dispose();
     }
     super.dispose();
+  }
+
+  // ── 카카오 로그인 로직 ──────────────────────────────────────
+  Future<void> _loginWithKakao() async {
+    try {
+      bool isInstalled = await isKakaoTalkInstalled();
+      
+      if (isInstalled) {
+        await UserApi.instance.loginWithKakaoTalk();
+      } else {
+        await UserApi.instance.loginWithKakaoAccount();
+      }
+      
+      User user = await UserApi.instance.me();
+      setState(() {
+        _isLoggedIn = true;
+        _kakaoUser = user;
+      });
+      _showSnack('${user.kakaoAccount?.profile?.nickname ?? '사용자'}님 환영합니다!');
+      
+      // 로그인 후 서버에 유저 정보 등록 (옵션)
+      // _registerUserToServer(user);
+      
+    } catch (e) {
+      debugPrint('카카오 로그인 에러: $e');
+      _showSnack('카카오 로그인에 실패했습니다. ($e)');
+    }
   }
 
   Future<void> _determinePosition() async {
@@ -482,7 +527,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         'stt_text': sttText,
         'lat': lat.toString(),
         'lng': lng.toString(),
-        'kakao_id': 'anonymous',
+        'kakao_id': _kakaoUser?.id.toString() ?? 'anonymous',
       });
 
       final response = await dio.post(
@@ -600,6 +645,47 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                 _buildBottomPanel(),
               ],
             ),
+
+            // ── Layer 3: 로그인 오버레이 (로그인 안 된 경우 덮어씌움) ──
+            if (!_isLoggedIn)
+              Positioned.fill(
+                child: Container(
+                  color: AppColors.cloudDancer.withOpacity(0.95), // 반투명 배경
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.lock_outline, size: 60, color: AppColors.accentBlue),
+                        const SizedBox(height: 16),
+                        const Text(
+                          '서비스 이용을 위해\n로그인이 필요합니다.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textDark, height: 1.4),
+                        ),
+                        const SizedBox(height: 32),
+                        ElevatedButton(
+                          onPressed: _loginWithKakao,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFFEE500), // 카카오 노란색
+                            foregroundColor: Colors.black87,
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.chat_bubble_rounded, size: 18),
+                              SizedBox(width: 8),
+                              Text('카카오로 3초만에 시작하기', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
