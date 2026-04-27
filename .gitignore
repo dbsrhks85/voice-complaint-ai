@@ -24,9 +24,11 @@ node_modules/
 Thumbs.db
 .DS_Store
 
-# ===== 업로드 파일 (음성 파일 등) =====
+# ===== 업로드 파일 및 테스트 결과 =====
 backend-server/uploads/*
 !backend-server/uploads/.gitkeep
+backend-server/test_results/*
+!backend-server/test_results/.gitkeep
 
 # ===== Flutter 서버 주소 설정 (개인별 환경 다름) =====
 mobile-app/lib/config.dart

@@ -1,4 +1,23 @@
-# python -m uvicorn main:app --reload 로 서버 실행
+# ============================================================
+# 🚀 서버 실행 가이드 (backend-server/ 폴더에서 실행)
+# ============================================================
+#
+# 1️⃣  가상환경 활성화 (최초 1회 또는 터미널 새로 열 때마다)
+#     source venv/bin/activate
+#
+# 2️⃣  서버 실행
+#     python -m uvicorn main:app --reload
+#
+# 3️⃣  서버 종료
+#     Ctrl + C
+#
+# 4️⃣  가상환경 비활성화 (선택사항)
+#     deactivate
+#
+# 📌 서버 실행 후 확인
+#     - API 문서  : http://127.0.0.1:8000/docs
+#     - 상태 확인 : http://127.0.0.1:8000/health
+# ============================================================
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -186,10 +205,33 @@ async def upload_audio(
     with open(file_path, "wb") as buffer:
         buffer.write(content)
 
+    # ── [추가] STT/GPT 테스트 결과 저장을 위한 폴더 및 JSON 데이터 준비
+    import json
+    test_results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_results")
+    os.makedirs(test_results_dir, exist_ok=True)
+    json_path = os.path.join(test_results_dir, f"{os.path.splitext(file_name)[0]}.json")
+    
+    test_result_data = {
+        "audio_file": file_name,
+        "stt_success": False,
+        "stt_text": None,
+        "stt_error": None,
+        "nlp_success": False,
+        "nlp_result": None,
+        "nlp_error": None
+    }
+
+    def save_test_result():
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(test_result_data, f, ensure_ascii=False, indent=2)
+
     # ── 3. STT (음성 → 텍스트)
     stt_result = await transcribe_audio(file_path)
-
+    
+    test_result_data["stt_success"] = stt_result["success"]
     if not stt_result["success"]:
+        test_result_data["stt_error"] = stt_result["error"]
+        save_test_result()  # 에러 상태 저장
         if os.path.exists(file_path):
             os.remove(file_path)
         return {
@@ -200,11 +242,16 @@ async def upload_audio(
         }
 
     stt_text = stt_result["text"]
+    test_result_data["stt_text"] = stt_text
+    save_test_result()  # STT 성공 상태 임시 저장
 
     # ── 4. NLP 분류 (텍스트 → 카테고리 / 부서)
     nlp_result = await classify_complaint(stt_text)
-
+    
+    test_result_data["nlp_success"] = nlp_result["success"]
     if not nlp_result["success"]:
+        test_result_data["nlp_error"] = nlp_result["error"]
+        save_test_result()
         if os.path.exists(file_path):
             os.remove(file_path)
         return {
@@ -214,6 +261,13 @@ async def upload_audio(
             "error": nlp_result["error"],
             "message": ApiMessages.NLP_FAILED
         }
+        
+    test_result_data["nlp_result"] = {
+        "title": nlp_result["title"],
+        "category": nlp_result["category"],
+        "department": nlp_result["department"]
+    }
+    save_test_result()  # 최종 성공 상태 저장
 
     # ── 5. DB 저장
     new_complaint = {
@@ -307,6 +361,21 @@ async def stt_only(
     if os.path.exists(file_path):
         os.remove(file_path)  # 임시 파일 즉시 삭제
 
+    # ── [추가] STT 결과를 JSON으로 저장
+    import json
+    test_results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_results")
+    os.makedirs(test_results_dir, exist_ok=True)
+    json_path = os.path.join(test_results_dir, f"stt_{timestamp}.json")
+    
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump({
+            "step": "STT",
+            "audio_file": file_name,
+            "success": stt_result["success"],
+            "stt_text": stt_result.get("text", ""),
+            "error": stt_result.get("error", None)
+        }, f, ensure_ascii=False, indent=2)
+
     if not stt_result["success"]:
         return {
             "success": False,
@@ -346,6 +415,24 @@ async def submit_complaint(
         raise HTTPException(status_code=500, detail=f"사용자 처리 중 오류: {str(e)}")
 
     nlp_result = await classify_complaint(stt_text)
+
+    # ── [추가] NLP 분류 결과를 JSON으로 저장
+    import json
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    test_results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_results")
+    os.makedirs(test_results_dir, exist_ok=True)
+    json_path = os.path.join(test_results_dir, f"nlp_{timestamp}.json")
+    
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump({
+            "step": "NLP",
+            "stt_text_input": stt_text,
+            "success": nlp_result["success"],
+            "title": nlp_result.get("title", ""),
+            "category": nlp_result.get("category", ""),
+            "department": nlp_result.get("department", ""),
+            "error": nlp_result.get("error", None)
+        }, f, ensure_ascii=False, indent=2)
 
     if not nlp_result["success"]:
         return {
