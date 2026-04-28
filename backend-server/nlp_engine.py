@@ -12,41 +12,52 @@ client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # 민원 분류 카테고리 정의
 CATEGORIES = {
     "repair": "파손/수리 — 시설물 파손, 도로 파손, 가로등 고장 등",
-    "suggestion": "건의사항 — 정책 건의, 환경 개선, 쓰레기 무단투기 등",
-    "inquiry": "문의/질문 — 행정 절차 문의, 서비스 이용 방법 등",
+    "suggestion": "건의사항 — 정책 건의, 환경 개선 등",
+    "inquiry": "문의사항 — 행정 절차 문의, 서비스 이용 방법 등",
+    "permission": "허가/신고 — 불법 건축 신고, 시설 사용 허가 등",
     "unclassified": "미분류 — 내용이 모호하거나 판단이 어려운 경우"
 }
 
-# 부서 매칭 테이블
+# 부서 매칭 테이블 (기본값 설정용)
 DEPARTMENT_MAP = {
-    "repair": "시설관리과",
-    "suggestion": "민원봉사과",
-    "inquiry": "민원봉사과",
-    "unclassified": "민원봉사과"
+    "repair": "road",
+    "suggestion": "planning",
+    "inquiry": "civil",
+    "permission": "building",
+    "unclassified": "civil"
 }
 
 # GPT에게 전달할 시스템 프롬프트
 SYSTEM_PROMPT = """당신은 춘천시 민원 분류 AI 시스템입니다.
-시민의 민원 내용을 분석하여 아래 4가지 카테고리 중 하나로 정확히 분류하고, 
-요약된 제목을 만들어주세요.
+시민의 민원 내용을 분석하여 아래 부서와 카테고리 중 하나로 정확히 분류하고, 요약된 제목을 만들어주세요.
 
-## 분류 카테고리
-- repair: 시설물 파손, 도로 파손, 가로등 고장, 간판 파손, 상수도 누수 등 물리적 수리가 필요한 경우
-- suggestion: 정책 건의, 환경 개선, 불법 주정차 단속 요청, 쓰레기 무단투기 신고 등
-- inquiry: 행정 절차 문의, 서비스 이용 방법, 증명서 발급 관련 질문 등
-- unclassified: 위 세 가지에 해당하지 않거나 내용이 모호한 경우
+## 담당 부서 (department)
+- road: 도로과 (도로 파손, 포트홀, 보도블럭, 아스팔트, 신호등 고장 등)
+- building: 건축과 (건물, 옥상, 벽, 불법건축, 공사장 불편 등)
+- park: 녹지공원과 (공원 관리, 나무, 가로수, 잔디, 화단 등)
+- traffic: 교통과 (불법 주차, 교통 체증, 버스/택시 민원, 신호 체계 등)
+- environment: 환경과 (쓰레기 무단투기, 악취, 폐기물, 소음, 먼지 등)
+- planning: 기획예산과 (정책 제안, 예산 반영, 제도 개선 건의 등)
+- civil: 민원담당관 (기타 일반 민원, 위 부서들에 해당하지 않는 경우)
+
+## 분류 카테고리 (category)
+- repair: 파손/수리 (물리적 보수 필요)
+- suggestion: 건의사항 (제안, 환경 개선 요청 등)
+- inquiry: 문의사항 (단순 질문, 절차 확인 등)
+- permission: 허가/신고 (불법 신고, 인허가 관련)
 
 ## 응답 형식 (반드시 JSON으로만 답변)
 {
     "title": "20자 이내의 간결한 민원 제목",
-    "category": "repair 또는 suggestion 또는 inquiry 또는 unclassified",
+    "category": "repair|suggestion|inquiry|permission",
+    "department": "road|building|park|traffic|environment|planning|civil",
     "confidence": 0.0~1.0 사이의 분류 신뢰도
 }
 
 주의사항:
 - 반드시 유효한 JSON만 출력하세요.
 - title은 20자 이내로 핵심만 요약하세요.
-- 확신이 없으면 category를 "unclassified"로, confidence를 낮게 설정하세요.
+- 확신이 없으면 department를 "civil"로, category를 "inquiry"로 설정하세요.
 """
 
 
@@ -60,8 +71,8 @@ async def classify_complaint(text: str) -> dict:
     Returns:
         {
             "title": "요약된 민원 제목",
-            "category": "repair|suggestion|inquiry|unclassified",
-            "department": "담당 부서명",
+            "category": "repair|suggestion|inquiry|permission|unclassified",
+            "department": "road|building|park|traffic|environment|planning|civil",
             "confidence": 0.95,
             "success": True/False,
             "error": "에러 메시지"
@@ -73,7 +84,7 @@ async def classify_complaint(text: str) -> dict:
             return {
                 "title": NlpMessages.DEFAULT_TITLE,
                 "category": "unclassified",
-                "department": DEPARTMENT_MAP["unclassified"],
+                "department": "civil",
                 "confidence": 0.0,
                 "success": False,
                 "error": NlpMessages.EMPTY_TEXT
@@ -99,13 +110,19 @@ async def classify_complaint(text: str) -> dict:
         if category not in CATEGORIES:
             category = "unclassified"
 
+        dept = result.get("department", "civil")
+        # 지원하지 않는 부서 키일 경우 fallback
+        allowed_depts = ["road", "building", "park", "traffic", "environment", "planning", "civil"]
+        if dept not in allowed_depts:
+            dept = DEPARTMENT_MAP.get(category, "civil")
+
         title = result.get("title", "제목 없음")[:20]  # 20자 제한
         confidence = min(max(float(result.get("confidence", 0.0)), 0.0), 1.0)
 
         return {
             "title": title,
             "category": category,
-            "department": DEPARTMENT_MAP.get(category, "민원봉사과"),
+            "department": dept,
             "confidence": confidence,
             "success": True,
             "error": None

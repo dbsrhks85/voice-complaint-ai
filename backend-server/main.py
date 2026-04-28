@@ -140,6 +140,17 @@ async def get_my_reports(kakao_id: str):
 
 
 # ─────────────────────────────────────────
+# GET /get-departments  —  부서 정보 조회
+# ─────────────────────────────────────────
+@app.get("/get-departments")
+async def get_departments():
+    """부서 목록 및 관련 규칙 조회"""
+    supabase = get_supabase()
+    result = await supabase.table("departments").select("*").order("id").execute()
+    return result.data
+
+
+# ─────────────────────────────────────────
 # POST /resolve-report/{report_id}  —  민원 처리 상태 변경
 # ─────────────────────────────────────────
 @app.post("/resolve-report/{report_id}")
