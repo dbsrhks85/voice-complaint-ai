@@ -351,8 +351,9 @@ async def stt_only(
     file: UploadFile = File(..., description="음성 파일 (m4a, wav, mp3 등)")
 ):
     """
-    🎙️ STT 전용 API — NLP/DB 없이 텍스트만 반환
-    - 앱에서 사용자 재확인 후 /submit-complaint 호출
+    🎙️ STT + NLP 초기 분류 API
+    - 앱에서 음성을 텍스트로 바꾸고, GPT가 1차 분류한 결과를 함께 반환
+    - 사용자가 바텀시트에서 결과를 수정할 수 있도록 제공
     - 임시 음성 파일은 STT 처리 완료 즉시 삭제
     """
     content = await file.read()
@@ -395,10 +396,15 @@ async def stt_only(
             "message": ApiMessages.STT_FAILED
         }
 
+    # ── [추가] STT가 성공하면 NLP도 바로 실행해서 앱에 제안 ──
+    from nlp_engine import classify_complaint
+    nlp_result = await classify_complaint(stt_result["text"])
+
     return {
         "success": True,
         "stt_text": stt_result["text"],
-        "message": "STT 변환 완료"
+        "nlp_suggestion": nlp_result, # GPT가 추천하는 부서, 유형, 제목 등
+        "message": "STT 변환 및 초기 분류 완료"
     }
 
 
@@ -408,15 +414,20 @@ async def stt_only(
 @app.post("/submit-complaint")
 async def submit_complaint(
     stt_text: str = Form(..., description="사용자가 확인한 STT 텍스트"),
-    lat: float = Form(..., description="위도 (GPS)"),
-    lng: float = Form(..., description="경도 (GPS)"),
+    lat: float = Form(None, description="위도 (GPS) - 행정 민원시 None 가능"),
+    lng: float = Form(None, description="경도 (GPS) - 행정 민원시 None 가능"),
     kakao_id: str = Form(default="anonymous", description="카카오 로그인 ID"),
-    nickname: str = Form(default=None, description="카카오 닉네임 (선택)")
+    nickname: str = Form(default=None, description="카카오 닉네임 (선택)"),
+    title: str = Form(None, description="앱에서 확정한 제목"),
+    category: str = Form(None, description="앱에서 확정한 카테고리"),
+    department: str = Form(None, description="앱에서 확정한 부서"),
+    complaint_type: str = Form(None, description="앱에서 확정한 현장/행정 유형"),
+    attachments: list[UploadFile] = File(default=[])
 ):
     """
-    ✅ 민원 최종 접수 API — 사용자가 STT 결과를 확인한 뒤 호출
-    1. GPT-4o mini → 카테고리 / 부서 분류
-    2. Supabase complaints 테이블에 저장
+    ✅ 민원 최종 접수 API — 사용자가 STT 결과를 확인/수정한 뒤 호출
+    - 앱에서 넘어온 NLP 결과를 우선 사용 (비용 절감)
+    - Supabase complaints 테이블에 저장
     """
     supabase = get_supabase()
 
@@ -425,9 +436,19 @@ async def submit_complaint(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"사용자 처리 중 오류: {str(e)}")
 
-    nlp_result = await classify_complaint(stt_text)
+    # 앱에서 넘겨준 분류값이 있으면 그대로 쓰고, 없으면 NLP 재실행
+    if title and category and department and complaint_type:
+        nlp_result = {
+            "success": True,
+            "title": title,
+            "category": category,
+            "department": department,
+            "complaint_type": complaint_type
+        }
+    else:
+        nlp_result = await classify_complaint(stt_text)
 
-    # ── [추가] NLP 분류 결과를 JSON으로 저장
+    # ── NLP 분류 결과를 JSON으로 저장
     import json
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     test_results_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_results")
@@ -436,21 +457,22 @@ async def submit_complaint(
     
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump({
-            "step": "NLP",
+            "step": "NLP_Final",
             "stt_text_input": stt_text,
-            "success": nlp_result["success"],
+            "success": nlp_result.get("success", False),
             "title": nlp_result.get("title", ""),
+            "complaint_type": nlp_result.get("complaint_type", "field"),
             "category": nlp_result.get("category", ""),
             "department": nlp_result.get("department", ""),
             "error": nlp_result.get("error", None)
         }, f, ensure_ascii=False, indent=2)
 
-    if not nlp_result["success"]:
+    if not nlp_result.get("success", False):
         return {
             "success": False,
             "step": "nlp",
             "stt_text": stt_text,
-            "error": nlp_result["error"],
+            "error": nlp_result.get("error", "Unknown error"),
             "message": ApiMessages.NLP_FAILED,
         }
 
@@ -460,10 +482,13 @@ async def submit_complaint(
         "title":      nlp_result["title"],
         "lat":        lat,
         "lng":        lng,
+        "complaint_type": nlp_result.get("complaint_type", "field"),
         "category":   nlp_result["category"],
         "department": nlp_result["department"],
         "status":     "pending",
         "audio_path": None,
+        "attachment_urls": [],
+        "attachment_note": None
     }
 
     try:

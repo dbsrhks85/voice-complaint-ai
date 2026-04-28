@@ -12,6 +12,8 @@ import 'services/audio_normalizer.dart';
 import 'constants.dart';
 import 'config.dart'; // ← 서버 주소는 config.dart에서 관리 (git 제외)
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:image_picker/image_picker.dart';
 
 // ── Cloud Dancer 디자인 시스템 ──────────────────────
 class AppColors {
@@ -356,11 +358,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
       if (result['success'] == true) {
         final sttText = result['stt_text'] as String? ?? '';
+        final nlpSuggestion = result['nlp_suggestion'] as Map<String, dynamic>?;
         if (sttText.isEmpty) {
           _showSnack(AppMessages.sttFetchFailed);
           return;
         }
-        _showSttConfirmBottomSheet(sttText: sttText);
+        _showSttConfirmBottomSheet(sttText: sttText, nlpSuggestion: nlpSuggestion);
       } else {
         _showSnack(result['error']?.toString() ?? AppMessages.sttFetchFailed);
       }
@@ -373,141 +376,203 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   // ──────────────────────────────────────────────────────────
   // [Step 2]  바텀시트 — STT 결과 사용자 재확인
   // ──────────────────────────────────────────────────────────
-  void _showSttConfirmBottomSheet({required String sttText}) {
+  void _showSttConfirmBottomSheet({required String sttText, Map<String, dynamic>? nlpSuggestion}) {
+    String currentType = nlpSuggestion?['complaint_type'] ?? 'field';
+    List<File> attachedFiles = [];
+    final TextEditingController textController = TextEditingController(text: sttText);
+
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        decoration: const BoxDecoration(
-          color: AppColors.cloudSoft,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-        ),
-        padding: EdgeInsets.fromLTRB(
-          24, 16, 24,
-          MediaQuery.of(ctx).viewInsets.bottom + 36,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 드래그 핸들
-            Container(
-              width: 36,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 24),
-              decoration: BoxDecoration(
-                color: AppColors.cloudDeep,
-                borderRadius: BorderRadius.circular(2),
-              ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (BuildContext context, StateSetter setModalState) {
+          return Container(
+            decoration: const BoxDecoration(
+              color: AppColors.cloudSoft,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
             ),
-
-            // 아이콘 원형 배지
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppColors.accentBlue.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.hearing_outlined,
-                color: AppColors.accentBlue,
-                size: 30,
-              ),
+            padding: EdgeInsets.fromLTRB(
+              24, 16, 24,
+              MediaQuery.of(context).viewInsets.bottom + 36,
             ),
-            const SizedBox(height: 16),
-
-            // 제목
-            const Text(
-              AppMessages.sttConfirmTitle,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textDark,
-              ),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              AppMessages.sttConfirmSubtitle,
-              style: TextStyle(fontSize: 13, color: AppColors.textMid),
-            ),
-            const SizedBox(height: 20),
-
-            // STT 변환 텍스트 카드
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: AppColors.cloudDancer,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppColors.cloudDeep),
-              ),
-              child: Text(
-                '"$sttText"',
-                style: const TextStyle(
-                  fontSize: 15,
-                  color: AppColors.textDark,
-                  fontWeight: FontWeight.w500,
-                  height: 1.65,
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            // ✅ 확인 버튼
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  _submitComplaintWithText(sttText: sttText);
-                },
-                icon: const Icon(Icons.check_circle_outline, size: 20),
-                label: const Text(
-                  AppMessages.sttConfirmYes,
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.accentBlue,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 24),
+                  decoration: BoxDecoration(
+                    color: AppColors.cloudDeep,
+                    borderRadius: BorderRadius.circular(2),
                   ),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  elevation: 0,
                 ),
-              ),
-            ),
-            const SizedBox(height: 12),
 
-            // 🔄 재녹음 버튼
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  Navigator.pop(ctx);
-                  setState(() {
-                    _filePath = null;
-                    _normalizedFilePath = null;
-                  });
-                  _showSnack(AppMessages.sttConfirmNoSnack);
-                },
-                icon: const Icon(Icons.mic_outlined, size: 20),
-                label: const Text(
-                  AppMessages.sttConfirmNo,
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
-                ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.textMid,
-                  side: const BorderSide(color: AppColors.cloudDeep, width: 1.5),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+                const Text(
+                  AppMessages.sttConfirmTitle,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textDark,
                   ),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
-              ),
+                const SizedBox(height: 6),
+                const Text(
+                  "아래 민원 내용을 확인하고 알맞은 유형을 선택해주세요.",
+                  style: TextStyle(fontSize: 13, color: AppColors.textMid),
+                ),
+                const SizedBox(height: 20),
+
+                // 유형 선택 토글
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('📍 현장 민원'),
+                      selected: currentType == 'field',
+                      selectedColor: AppColors.accentBlue.withOpacity(0.2),
+                      onSelected: (bool selected) {
+                        setModalState(() => currentType = 'field');
+                      },
+                    ),
+                    const SizedBox(width: 12),
+                    ChoiceChip(
+                      label: const Text('📄 행정 민원'),
+                      selected: currentType == 'admin',
+                      selectedColor: AppColors.accentBlue.withOpacity(0.2),
+                      onSelected: (bool selected) {
+                        setModalState(() => currentType = 'admin');
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: AppColors.cloudDancer,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppColors.cloudDeep),
+                  ),
+                  child: TextField(
+                    controller: textController,
+                    maxLines: null,
+                    keyboardType: TextInputType.multiline,
+                    decoration: const InputDecoration(
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.all(18),
+                      hintText: '수정할 민원 내용을 입력하세요',
+                    ),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      color: AppColors.textDark,
+                      fontWeight: FontWeight.w500,
+                      height: 1.65,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // 첨부 파일 UI (유형 상관없이 표시됨 - 사용자가 원함)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () async {
+                      final picker = ImagePicker();
+                      final XFile? result = await picker.pickImage(source: ImageSource.gallery);
+                      if (result != null) {
+                        setModalState(() {
+                          attachedFiles.add(File(result.path));
+                        });
+                      }
+                    },
+                    icon: const Icon(Icons.attach_file, size: 20, color: AppColors.textMid),
+                    label: const Text(
+                      '파일/사진 첨부하기 (선택)',
+                      style: TextStyle(color: AppColors.textMid),
+                    ),
+                  ),
+                ),
+                if (attachedFiles.isNotEmpty)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 12, bottom: 8),
+                      child: Text(
+                        '첨부됨: ${attachedFiles.last.path.split('/').last}',
+                        style: const TextStyle(fontSize: 12, color: AppColors.accentBlue),
+                      ),
+                    ),
+                  ),
+
+                const SizedBox(height: 24),
+
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _submitComplaintWithText(
+                        sttText: textController.text,
+                        complaintType: currentType,
+                        category: nlpSuggestion?['category'],
+                        department: nlpSuggestion?['department'],
+                        title: nlpSuggestion?['title'],
+                        attachedFiles: attachedFiles,
+                      );
+                    },
+                    icon: const Icon(Icons.check_circle_outline, size: 20),
+                    label: const Text(
+                      AppMessages.sttConfirmYes,
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.accentBlue,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      elevation: 0,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      setState(() {
+                        _filePath = null;
+                        _normalizedFilePath = null;
+                      });
+                      _showSnack(AppMessages.sttConfirmNoSnack);
+                    },
+                    icon: const Icon(Icons.mic_outlined, size: 20),
+                    label: const Text(
+                      AppMessages.sttConfirmNo,
+                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.textMid,
+                      side: const BorderSide(color: AppColors.cloudDeep, width: 1.5),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+            ),
+          );
+        }
       ),
     );
   }
@@ -515,7 +580,14 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   // ──────────────────────────────────────────────────────────
   // [Step 3]  /submit-complaint  →  NLP 분류 + DB 저장
   // ──────────────────────────────────────────────────────────
-  Future<void> _submitComplaintWithText({required String sttText}) async {
+  Future<void> _submitComplaintWithText({
+    required String sttText,
+    String? complaintType,
+    String? category,
+    String? department,
+    String? title,
+    List<File> attachedFiles = const [],
+  }) async {
     setState(() => _isSubmitting = true);
 
     final lat = _currentPosition?.latitude ?? 37.0;
@@ -523,12 +595,28 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
     try {
       final dio = Dio();
-      final formData = FormData.fromMap({
+      
+      final mapData = <String, dynamic>{
         'stt_text': sttText,
         'lat': lat.toString(),
         'lng': lng.toString(),
         'kakao_id': _kakaoUser?.id.toString() ?? 'anonymous',
-      });
+        if (complaintType != null) 'complaint_type': complaintType,
+        if (category != null) 'category': category,
+        if (department != null) 'department': department,
+        if (title != null) 'title': title,
+      };
+
+      if (attachedFiles.isNotEmpty) {
+        mapData['attachments'] = [
+          await MultipartFile.fromFile(
+            attachedFiles.first.path,
+            filename: attachedFiles.first.path.split('/').last,
+          )
+        ];
+      }
+
+      final formData = FormData.fromMap(mapData);
 
       final response = await dio.post(
         '$_kServerUrl/submit-complaint',

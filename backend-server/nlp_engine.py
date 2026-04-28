@@ -29,7 +29,11 @@ DEPARTMENT_MAP = {
 
 # GPT에게 전달할 시스템 프롬프트
 SYSTEM_PROMPT = """당신은 춘천시 민원 분류 AI 시스템입니다.
-시민의 민원 내용을 분석하여 아래 부서와 카테고리 중 하나로 정확히 분류하고, 요약된 제목을 만들어주세요.
+시민의 민원 내용을 분석하여 아래 부서, 카테고리, 그리고 민원 유형(현장/행정) 중 하나로 정확히 분류하고, 요약된 제목을 만들어주세요.
+
+## 민원 유형 (complaint_type)
+- field: 현장 민원 (특정 장소에 직접 방문하여 물리적 작업이나 조사가 필요한 민원. 예: 도로 파손, 가로등 고장, 쓰레기 무단투기 등)
+- admin: 행정 민원 (서류 처리, 시스템 증명서 발급, 단순 문의, 정책 제안 등 현장 조사가 불필요한 민원)
 
 ## 담당 부서 (department)
 - road: 도로과 (도로 파손, 포트홀, 보도블럭, 아스팔트, 신호등 고장 등)
@@ -49,6 +53,7 @@ SYSTEM_PROMPT = """당신은 춘천시 민원 분류 AI 시스템입니다.
 ## 응답 형식 (반드시 JSON으로만 답변)
 {
     "title": "20자 이내의 간결한 민원 제목",
+    "complaint_type": "field|admin",
     "category": "repair|suggestion|inquiry|permission",
     "department": "road|building|park|traffic|environment|planning|civil",
     "confidence": 0.0~1.0 사이의 분류 신뢰도
@@ -57,7 +62,7 @@ SYSTEM_PROMPT = """당신은 춘천시 민원 분류 AI 시스템입니다.
 주의사항:
 - 반드시 유효한 JSON만 출력하세요.
 - title은 20자 이내로 핵심만 요약하세요.
-- 확신이 없으면 department를 "civil"로, category를 "inquiry"로 설정하세요.
+- 확신이 없으면 department를 "civil"로, category를 "inquiry"로, complaint_type을 "admin"으로 설정하세요.
 """
 
 
@@ -71,6 +76,7 @@ async def classify_complaint(text: str) -> dict:
     Returns:
         {
             "title": "요약된 민원 제목",
+            "complaint_type": "field|admin",
             "category": "repair|suggestion|inquiry|permission|unclassified",
             "department": "road|building|park|traffic|environment|planning|civil",
             "confidence": 0.95,
@@ -83,6 +89,7 @@ async def classify_complaint(text: str) -> dict:
         if not text or text.strip() == "":
             return {
                 "title": NlpMessages.DEFAULT_TITLE,
+                "complaint_type": "admin",
                 "category": "unclassified",
                 "department": "civil",
                 "confidence": 0.0,
@@ -117,10 +124,15 @@ async def classify_complaint(text: str) -> dict:
             dept = DEPARTMENT_MAP.get(category, "civil")
 
         title = result.get("title", "제목 없음")[:20]  # 20자 제한
+        complaint_type = result.get("complaint_type", "field")
+        if complaint_type not in ["field", "admin"]:
+            complaint_type = "field"
+            
         confidence = min(max(float(result.get("confidence", 0.0)), 0.0), 1.0)
 
         return {
             "title": title,
+            "complaint_type": complaint_type,
             "category": category,
             "department": dept,
             "confidence": confidence,
