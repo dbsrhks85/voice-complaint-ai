@@ -102,6 +102,7 @@ const SearchIcon = () => (
 function App() {
   const { kakao } = window;
 
+  const [statusFilter, setStatusFilter] = useState('pending'); // 'pending' or 'completed'
   const [reports, setReports] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -116,9 +117,11 @@ function App() {
   // 부서 규칙 (Key-Value 맵)
   const deptRules = useMemo(() => {
     const map = {};
-    departments.forEach((d) => {
-      map[d.key] = d;
-    });
+    if (Array.isArray(departments)) {
+      departments.forEach((d) => {
+        map[d.key] = d;
+      });
+    }
     return map;
   }, [departments]);
 
@@ -126,10 +129,25 @@ function App() {
   const loadDepartments = useCallback(async () => {
     try {
       const res = await fetch(`${API_URL}/get-departments`);
+      if (!res.ok) throw new Error('API response not ok');
       const data = await res.json();
-      setDepartments(data);
+      if (Array.isArray(data)) {
+        setDepartments(data);
+      } else {
+        throw new Error('Data is not an array');
+      }
     } catch (e) {
-      console.error('부서 로드 실패:', e);
+      console.error('부서 로드 실패 (기본값 사용):', e);
+      // 서버에서 부서 정보를 못 가져올 경우 기본 부서 세팅
+      setDepartments([
+        { key: 'road', label: '도로과', icon: '🛣️', color: '#3b82f6', tasks: ['도로 보수', '포트홀 처리'] },
+        { key: 'building', label: '건축과', icon: '🏢', color: '#8b5cf6', tasks: ['건물 안전점검', '불법건축 단속'] },
+        { key: 'park', label: '녹지공원과', icon: '🌳', color: '#10b981', tasks: ['공원 관리', '가로수 정비'] },
+        { key: 'traffic', label: '교통과', icon: '🚦', color: '#f59e0b', tasks: ['교통 시설물 수리', '불법주차 단속'] },
+        { key: 'environment', label: '환경과', icon: '♻️', color: '#ef4444', tasks: ['쓰레기 무단투기 단속', '소음 측정'] },
+        { key: 'planning', label: '기획예산과', icon: '📊', color: '#6366f1', tasks: ['민원 정책 반영', '예산 검토'] },
+        { key: 'civil', label: '민원담당관', icon: '🤝', color: '#64748b', tasks: ['일반 상담', '부서 배정'] },
+      ]);
     }
   }, []);
 
@@ -197,22 +215,26 @@ function App() {
     }));
   }, [processedReports, departments]);
 
-  // 필터
-  const pendingReports = processedReports.filter((r) => {
-    if (r.status !== 'pending') return false;
+  // 필터링된 민원 목록
+  const filteredReports = useMemo(() => {
+    return processedReports.filter((r) => {
+      // 1. 상태 필터 (pending / completed)
+      if (r.status !== statusFilter) return false;
 
-    const matchDept =
-      departmentFilter === 'all' || r.deptKey === departmentFilter;
+      // 2. 부서 필터
+      const matchDept =
+        departmentFilter === 'all' || r.deptKey === departmentFilter;
 
-    const q = searchQuery.toLowerCase();
+      // 3. 검색 필터
+      const q = searchQuery.toLowerCase();
+      const matchSearch =
+        !q ||
+        r.title?.toLowerCase().includes(q) ||
+        r.address?.toLowerCase().includes(q);
 
-    const matchSearch =
-      !q ||
-      r.title?.toLowerCase().includes(q) ||
-      r.address?.toLowerCase().includes(q);
-
-    return matchDept && matchSearch;
-  });
+      return matchDept && matchSearch;
+    });
+  }, [processedReports, statusFilter, departmentFilter, searchQuery]);
 
   // 지도 마커
   useEffect(() => {
@@ -226,7 +248,7 @@ function App() {
 
     markersRef.current = {};
 
-    pendingReports.forEach((report) => {
+    filteredReports.forEach((report) => {
       const pos = new kakao.maps.LatLng(report.lat, report.lng);
 
       const marker = new kakao.maps.Marker({
@@ -268,17 +290,30 @@ function App() {
 
       markersRef.current[report.id] = { marker, pos };
     });
-  }, [pendingReports, kakao]);
+  }, [filteredReports, kakao]);
+
+
 
   // 처리완료
   const resolveReport = async (id) => {
     if (!window.confirm('해당 민원을 처리 완료하시겠습니까?')) return;
 
-    await fetch(`${API_URL}/resolve-report/${id}`, {
-      method: 'POST',
-    });
+    const formData = new FormData();
+    formData.append('status', 'completed');
 
-    loadReports();
+    try {
+      const res = await fetch(`${API_URL}/update-status/${id}`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (res.ok) {
+        loadReports();
+      } else {
+        alert('상태 업데이트에 실패했습니다.');
+      }
+    } catch (e) {
+      console.error('상태 업데이트 에러:', e);
+    }
   };
 
   const moveToMarker = (id) => {
@@ -314,7 +349,7 @@ function App() {
           </div>
 
           <div className="stat-chip pending">
-            대기 {pendingReports.length}
+            목록 {filteredReports.length}
           </div>
         </div>
       </header>
@@ -370,9 +405,25 @@ function App() {
             ))}
           </div>
 
+          {/* 상태 필터 탭 */}
+          <div className="status-tabs">
+            <button 
+              className={`status-tab ${statusFilter === 'pending' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('pending')}
+            >
+              대기 중
+            </button>
+            <button 
+              className={`status-tab ${statusFilter === 'completed' ? 'active' : ''}`}
+              onClick={() => setStatusFilter('completed')}
+            >
+              처리 완료
+            </button>
+          </div>
+
           {/* 목록 */}
           <div className="report-list">
-            {pendingReports.map((report) => {
+            {filteredReports.map((report) => {
               const cat = getCat(report.category);
 
               return (
@@ -425,7 +476,7 @@ function App() {
                       처리 업무
                     </div>
 
-                    {report.dept.tasks.map((task, idx) => (
+                    {(report.dept.tasks || []).map((task, idx) => (
                       <div
                         className="task-row"
                         key={idx}
@@ -435,21 +486,30 @@ function App() {
                     ))}
                   </div>
 
-                  {/* 버튼 */}
-                  <button
-                    className="resolve-btn"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      resolveReport(report.id);
-                    }}
-                  >
-                    처리 완료
-                  </button>
+                  {/* 버튼 (대기 중일 때만 표시) */}
+                  {report.status === 'pending' && (
+                    <button
+                      className="resolve-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        resolveReport(report.id);
+                      }}
+                    >
+                      처리 완료
+                    </button>
+                  )}
+                  
+                  {/* 처리 완료 라벨 (완료 상태일 때 표시) */}
+                  {report.status === 'completed' && (
+                    <div className="resolved-label">
+                      ✅ 처리 완료됨 ({formatTime(report.resolved_at)})
+                    </div>
+                  )}
                 </div>
               );
             })}
 
-            {pendingReports.length === 0 && (
+            {filteredReports.length === 0 && (
               <div className="empty-state">
                 표시할 민원이 없습니다.
               </div>
