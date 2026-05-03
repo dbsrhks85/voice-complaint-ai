@@ -23,6 +23,8 @@ import uuid
 import json
 import zipfile
 import io
+import urllib.parse
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -149,15 +151,23 @@ async def get_my_reports(kakao_id: str):
     return result.data
 
 @app.post("/update-status/{report_id}")
-async def update_status(report_id: int, status: str = Form(...)):
-    """민원 상태 변경 (pending, processing, completed)"""
-    if status not in ["pending", "processing", "completed"]:
+async def update_status(
+    report_id: int, 
+    status: str = Form(...),
+    rejection_reason: str = Form(None)
+):
+    """민원 상태 변경 (pending, processing, completed, rejected)"""
+    if status not in ["pending", "processing", "completed", "rejected"]:
         raise HTTPException(status_code=400, detail="지원하지 않는 상태값입니다.")
 
     supabase = get_supabase()
     update_data = {"status": status}
-    if status == "completed":
+    
+    if status in ["processing", "completed", "rejected"]:
         update_data["resolved_at"] = datetime.now(timezone.utc).isoformat()
+        
+    if status == "rejected" and rejection_reason:
+        update_data["rejection_reason"] = rejection_reason
 
     result = await supabase.table("complaints").update(update_data).eq("id", report_id).execute()
     if not result.data:
@@ -293,34 +303,61 @@ async def download_attachments(report_id: int):
     report = result.data[0]
     nickname = "unknown"
     if "users" in report and report["users"]:
-        nickname = report["users"].get("nickname", "unknown")
+        nickname = report["users"].get("nickname") or "unknown"
     
     attachment_urls = report.get("attachment_urls", [])
     if not attachment_urls:
         raise HTTPException(status_code=400, detail="첨부파일이 없습니다.")
 
-    # 2. ZIP 파일 생성 (메모리 내)
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for file_info in attachment_urls:
-            # 기존 데이터가 절대 경로일 수 있으므로 파일명만 추출하거나 경로 확인
-            filename = os.path.basename(file_info)
-            file_path = os.path.join(UPLOAD_DIR, filename)
-            
-            if os.path.exists(file_path):
-                zip_file.write(file_path, arcname=filename)
-            else:
-                # 절대 경로로 저장되어 있는 경우 대응
-                if os.path.exists(file_info):
-                    zip_file.write(file_info, arcname=filename)
+    try:
+        # 2. ZIP 파일 생성 (메모리 내)
+        zip_buffer = io.BytesIO()
+        
+        # 날짜 및 닉네임 정리 (None 또는 숫자형 대비 str 변환)
+        date_prefix = datetime.now().strftime("%y%m%d")
+        nickname_str = str(nickname)
+        safe_nickname = "".join([c for c in nickname_str if c.isalnum() or c in (" ", "-", "_")]).strip() or "unknown"
 
-    zip_buffer.seek(0)
-    
-    # 3. 파일 이름 설정 (한글 깨짐 방지를 위해 인코딩 필요할 수 있음)
-    download_name = f"{nickname}_attachments.zip"
-    
-    return StreamingResponse(
-        zip_buffer,
-        media_type="application/x-zip-compressed",
-        headers={"Content-Disposition": f"attachment; filename={download_name}"}
-    )
+        files_found = 0
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for file_info in attachment_urls:
+                if not file_info:
+                    continue
+                
+                filename = os.path.basename(file_info)
+                # 1순위: 현재 UPLOAD_DIR 확인
+                file_path = os.path.join(UPLOAD_DIR, filename)
+                
+                # 압축 파일 내 저장될 이름 (날짜_닉네임_파일명)
+                arc_name = f"{date_prefix}_{safe_nickname}_{filename}"
+                
+                if os.path.exists(file_path):
+                    zip_file.write(file_path, arcname=arc_name)
+                    files_found += 1
+                elif os.path.exists(file_info): # 2순위: DB에 저장된 원래 절대 경로 확인 (호환성용)
+                    zip_file.write(file_info, arcname=arc_name)
+                    files_found += 1
+                else:
+                    print(f"Warning: File not found on disk: {file_path} or {file_info}")
+
+        if files_found == 0:
+            raise HTTPException(status_code=404, detail=f"서버에서 실제 파일을 찾을 수 없습니다. (ID: {report_id})")
+
+        zip_buffer.seek(0)
+        
+        # 다운로드 파일명 설정 및 RFC 5987 기반 인코딩 (브라우저 한글 깨짐 방지)
+        download_name = f"{date_prefix}_{safe_nickname}_첨부파일.zip"
+        encoded_name = urllib.parse.quote(download_name)
+        
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Download Error for Report ID {report_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"첨부파일 압축 생성 중 오류가 발생했습니다: {str(e)}")

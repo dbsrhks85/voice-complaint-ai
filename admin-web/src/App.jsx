@@ -110,6 +110,9 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(false);
   const [selectedReport, setSelectedReport] = useState(null);
+  const [rejectingReportId, setRejectingReportId] = useState(null);
+  const [rejectionReason, setRejectionReason] = useState('접수 내용이 부족합니다');
+  const [customReason, setCustomReason] = useState('');
 
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -303,12 +306,11 @@ function App() {
 
 
 
-  // 처리완료
-  const resolveReport = async (id) => {
-    if (!window.confirm('해당 민원을 처리 완료하시겠습니까?')) return;
-
+  // 상태 변경 (수락, 완료, 반려 공통)
+  const updateStatus = async (id, status, reason = null) => {
     const formData = new FormData();
-    formData.append('status', 'completed');
+    formData.append('status', status);
+    if (reason) formData.append('rejection_reason', reason);
 
     try {
       const res = await fetch(`${API_URL}/update-status/${id}`, {
@@ -317,13 +319,21 @@ function App() {
       });
       if (res.ok) {
         loadReports();
+        setRejectingReportId(null);
+        setCustomReason('');
       } else {
         throw new Error(`HTTP ${res.status}`);
       }
     } catch (e) {
       console.error('상태 업데이트 에러:', e);
-      window.alert('처리 완료에 실패했습니다. 서버 상태를 확인해주세요.');
+      window.alert('상태 변경에 실패했습니다.');
     }
+  };
+
+  // 처리완료 (기존 호환성 유지용)
+  const resolveReport = (id) => {
+    if (!window.confirm('해당 민원을 처리 완료하시겠습니까?')) return;
+    updateStatus(id, 'completed');
   };
 
   const moveToMarker = (id) => {
@@ -391,6 +401,36 @@ function App() {
             </div>
           </div>
 
+          {/* 상태 필터 */}
+          <div className="sidebar-status-wrap">
+            <div className="status-menu">
+              <button 
+                className={`status-menu-item ${statusFilter === 'pending' ? 'active' : ''}`}
+                onClick={() => setStatusFilter('pending')}
+              >
+                접수 중
+              </button>
+              <button 
+                className={`status-menu-item ${statusFilter === 'processing' ? 'active' : ''}`}
+                onClick={() => setStatusFilter('processing')}
+              >
+                처리 중
+              </button>
+              <button 
+                className={`status-menu-item ${statusFilter === 'completed' ? 'active' : ''}`}
+                onClick={() => setStatusFilter('completed')}
+              >
+                처리 완료
+              </button>
+              <button 
+                className={`status-menu-item ${statusFilter === 'rejected' ? 'active' : ''}`}
+                onClick={() => setStatusFilter('rejected')}
+              >
+                반려됨
+              </button>
+            </div>
+          </div>
+
           {/* 부서 필터 */}
           <div className="sidebar-filters">
             <button
@@ -415,21 +455,6 @@ function App() {
             ))}
           </div>
 
-          {/* 상태 필터 탭 */}
-          <div className="status-tabs">
-            <button 
-              className={`status-tab ${statusFilter === 'pending' ? 'active' : ''}`}
-              onClick={() => setStatusFilter('pending')}
-            >
-              대기 중
-            </button>
-            <button 
-              className={`status-tab ${statusFilter === 'completed' ? 'active' : ''}`}
-              onClick={() => setStatusFilter('completed')}
-            >
-              처리 완료
-            </button>
-          </div>
 
           {/* 목록 */}
           <div className="report-list">
@@ -518,26 +543,100 @@ function App() {
                         setSelectedReport(report);
                       }}
                     >
-                      자세히 보기
+                      자세히
                     </button>
 
                     {report.status === 'pending' && (
+                      <>
+                        <button
+                          className="accept-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            updateStatus(report.id, 'processing');
+                          }}
+                        >
+                          수락
+                        </button>
+                        <button
+                          className="reject-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRejectingReportId(report.id);
+                          }}
+                        >
+                          반려
+                        </button>
+                      </>
+                    )}
+
+                    {report.status === 'processing' && (
                       <button
                         className="resolve-btn"
                         onClick={(e) => {
                           e.stopPropagation();
-                          resolveReport(report.id);
+                          updateStatus(report.id, 'completed');
                         }}
                       >
-                        처리 완료
+                        완료 처리
                       </button>
                     )}
                   </div>
+
+                  {/* 반려 사유 입력 오버레이 */}
+                  {rejectingReportId === report.id && (
+                    <div className="rejection-overlay" onClick={(e) => e.stopPropagation()}>
+                      <div className="rejection-title">민원 반려 사유 선택</div>
+                      <select 
+                        className="rejection-select"
+                        value={rejectionReason}
+                        onChange={(e) => setRejectionReason(e.target.value)}
+                      >
+                        <option value="접수 내용이 부족합니다">접수 내용이 부족합니다</option>
+                        <option value="위치 정보가 누락되었습니다">위치 정보가 누락되었습니다</option>
+                        <option value="관할 구역이 아닙니다">관할 구역이 아닙니다</option>
+                        <option value="기타">기타(직접작성)</option>
+                      </select>
+
+                      {rejectionReason === '기타' && (
+                        <textarea 
+                          className="rejection-input"
+                          placeholder="반려 사유를 직접 입력해주세요."
+                          value={customReason}
+                          onChange={(e) => setCustomReason(e.target.value)}
+                        />
+                      )}
+
+                      <div className="rejection-actions">
+                        <button 
+                          className="rejection-confirm-btn"
+                          onClick={() => {
+                            const reason = rejectionReason === '기타' ? customReason : rejectionReason;
+                            updateStatus(report.id, 'rejected', reason);
+                          }}
+                        >
+                          반려 확정
+                        </button>
+                        <button 
+                          className="rejection-cancel-btn"
+                          onClick={() => setRejectingReportId(null)}
+                        >
+                          취소
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   
                   {/* 처리 완료 라벨 (완료 상태일 때 표시) */}
                   {report.status === 'completed' && (
                     <div className="resolved-label">
                       ✅ 처리 완료됨 ({formatTime(report.resolved_at)})
+                    </div>
+                  )}
+
+                  {/* 반려 라벨 */}
+                  {report.status === 'rejected' && (
+                    <div className="resolved-label" style={{ color: '#ef4444', background: 'rgba(239,68,68,0.08)' }}>
+                      ❌ 반려됨: {report.rejection_reason}
                     </div>
                   )}
                 </div>
@@ -647,15 +746,22 @@ function App() {
                 <button 
                   className="modal-resolve-btn"
                   onClick={() => {
-                    resolveReport(selectedReport.id);
+                    updateStatus(selectedReport.id, 'processing');
                     setSelectedReport(null);
                   }}
                 >
-                  민원 처리 완료
+                  민원 수락 (처리 시작)
                 </button>
               ) : (
-                <div className="modal-resolved-badge">
-                  ✅ 처리 완료됨 ({formatTime(selectedReport.resolved_at)})
+                <div className="modal-resolved-badge" style={{
+                  background: selectedReport.status === 'rejected' ? 'rgba(239,68,68,0.08)' : 
+                              selectedReport.status === 'processing' ? 'rgba(59,130,246,0.08)' : 'rgba(16,185,129,0.08)',
+                  color: selectedReport.status === 'rejected' ? '#ef4444' : 
+                         selectedReport.status === 'processing' ? '#2563eb' : '#047857'
+                }}>
+                  {selectedReport.status === 'processing' ? '⚙️ 처리 중으로 변경됨' : 
+                   selectedReport.status === 'rejected' ? '❌ 반려됨' : '✅ 처리 완료됨'}
+                  {' '}({formatTime(selectedReport.resolved_at)})
                 </div>
               )}
             </div>
