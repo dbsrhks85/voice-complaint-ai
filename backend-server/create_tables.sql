@@ -43,13 +43,16 @@ CREATE TABLE IF NOT EXISTS complaints (
     
     -- [수정] 상태값 단계 확정 (기존과 동일하지만 명시적 확인)
     status       VARCHAR(20) DEFAULT 'pending' 
-                 CHECK (status IN ('pending', 'processing', 'completed')),
+                 CHECK (status IN ('pending', 'processing', 'completed', 'rejected')),
     
     audio_path      TEXT,
     attachment_urls TEXT[] DEFAULT '{}', -- [추가] 첨부 이미지/파일 URL 리스트
     attachment_note TEXT,               -- [추가] 관리자나 사용자가 남기는 추가 메모
+    rejection_reason TEXT,              -- [추가] 반려 사유
     
     created_at   TIMESTAMPTZ DEFAULT NOW(),
+    accepted_at  TIMESTAMPTZ,
+    rejected_at  TIMESTAMPTZ,
     resolved_at  TIMESTAMPTZ
 );
 
@@ -58,6 +61,9 @@ ALTER TABLE complaints ADD COLUMN IF NOT EXISTS address TEXT;
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS complaint_type VARCHAR(20) DEFAULT 'field';
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS attachment_urls TEXT[] DEFAULT '{}';
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS attachment_note TEXT;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
 
 UPDATE complaints
 SET complaint_type = 'admin'
@@ -93,6 +99,8 @@ CREATE INDEX IF NOT EXISTS idx_complaints_user   ON complaints(user_id);
 CREATE INDEX IF NOT EXISTS idx_complaints_status ON complaints(status);
 CREATE INDEX IF NOT EXISTS idx_complaints_gps    ON complaints(lat, lng);
 CREATE INDEX IF NOT EXISTS idx_complaints_dept   ON complaints(department);
+CREATE INDEX IF NOT EXISTS idx_complaints_accepted_at ON complaints(accepted_at);
+CREATE INDEX IF NOT EXISTS idx_complaints_rejected_at ON complaints(rejected_at);
 
 -- 부서 초기 데이터 삽입
 INSERT INTO departments (key, label, icon, color, keywords, tasks)

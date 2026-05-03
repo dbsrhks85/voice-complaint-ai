@@ -60,5 +60,6 @@ backend-server/
 OPENAI_API_KEY=sk-...
 SUPABASE_URL=https://xxxx.supabase.co
 SUPABASE_KEY=eyJ...
+KAKAO_REST_API_KEY=카카오_REST_API_키
 ```
 > `.env` 파일은 git에 올리지 않습니다 (`.gitignore` 처리됨)

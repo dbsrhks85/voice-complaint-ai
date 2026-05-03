@@ -24,7 +24,8 @@ import json
 import zipfile
 import io
 import urllib.parse
-from datetime import datetime, timezone
+import urllib.request
+import urllib.error
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -72,23 +73,96 @@ MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB
 # 정적 파일 서빙 (첨부파일 열람용)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
+KAKAO_REST_API_KEY = (
+    os.getenv("KAKAO_REST_API_KEY")
+    or os.getenv("KAKAO_API_KEY")
+    or os.getenv("KAKAO_MAP_REST_API_KEY")
+)
+
 # ─────────────────────────────────────────
 # 내부 유틸: 유저 관리
 # ─────────────────────────────────────────
+def build_user_label(nickname: str | None, kakao_id: str | None) -> str:
+    """관리자 화면용 민원인 표시명 생성"""
+    clean_nickname = (nickname or "").strip()
+    clean_kakao_id = (kakao_id or "").strip()
+
+    if not clean_nickname or clean_nickname == clean_kakao_id:
+        clean_nickname = "사용자"
+
+    if clean_kakao_id:
+        return f"{clean_nickname} / {clean_kakao_id}"
+    return clean_nickname
+
+
+def normalize_nickname(nickname: str | None, kakao_id: str | None) -> str | None:
+    """카카오 닉네임으로 보기 어려운 fallback 값은 저장/갱신에서 제외"""
+    clean_nickname = (nickname or "").strip()
+    clean_kakao_id = (kakao_id or "").strip()
+
+    if not clean_nickname:
+        return None
+    if clean_nickname in ("사용자", "알 수 없음", "unknown", "anonymous"):
+        return None
+    if clean_kakao_id and clean_nickname == clean_kakao_id:
+        return None
+    return clean_nickname
+
+
 async def get_or_create_user(kakao_id: str, nickname: str = None) -> int:
     supabase = get_supabase()
-    result = await supabase.table("users").select("id").eq("kakao_id", kakao_id).execute()
+    result = await supabase.table("users").select("id, nickname").eq("kakao_id", kakao_id).execute()
+    clean_nickname = normalize_nickname(nickname, kakao_id)
 
     if result.data and len(result.data) > 0:
-        return result.data[0]["id"]
+        user = result.data[0]
+        current_nickname = (user.get("nickname") or "").strip()
+        if clean_nickname and current_nickname != clean_nickname:
+            await supabase.table("users").update({
+                "nickname": clean_nickname
+            }).eq("id", user["id"]).execute()
+        return user["id"]
 
     new_user = await supabase.table("users").upsert({
         "kakao_id": kakao_id,
-        "nickname": nickname or kakao_id,
+        "nickname": clean_nickname or kakao_id,
         "role": "user",
     }, on_conflict="kakao_id").execute()
 
     return new_user.data[0]["id"]
+
+
+def reverse_geocode_address(lat: float, lng: float) -> str | None:
+    """카카오 로컬 API로 좌표를 주소 문자열로 변환"""
+    if not KAKAO_REST_API_KEY:
+        return None
+
+    query = urllib.parse.urlencode({"x": lng, "y": lat})
+    url = f"https://dapi.kakao.com/v2/local/geo/coord2address.json?{query}"
+    request = urllib.request.Request(
+        url,
+        headers={"Authorization": f"KakaoAK {KAKAO_REST_API_KEY}"}
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="ignore")
+        print(f"[reverse_geocode] Kakao API error {e.code}: {error_body}")
+        return None
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+        print(f"[reverse_geocode] request failed: {e}")
+        return None
+
+    documents = payload.get("documents") or []
+    if not documents:
+        return None
+
+    first = documents[0]
+    road_address = first.get("road_address") or {}
+    address = first.get("address") or {}
+    return road_address.get("address_name") or address.get("address_name")
 
 # ─────────────────────────────────────────
 # API 엔드포인트
@@ -113,17 +187,18 @@ async def health_check():
 async def get_reports():
     """민원 전체 목록 조회 (작성자 닉네임 포함)"""
     supabase = get_supabase()
-    # users 테이블과 join하여 nickname 가져오기
-    result = await supabase.table("complaints").select("*, users(nickname)").order("created_at", desc=True).execute()
+    # users 테이블과 join하여 관리자 표시용 민원인 정보를 가져오기
+    result = await supabase.table("complaints").select("*, users(id, nickname, kakao_id)").order("created_at", desc=True).execute()
 
     now = datetime.now(timezone.utc)
     active = []
     for r in result.data:
-        # 데이터 정규화: users(nickname)을 r["nickname"]으로 평탄화
-        if "users" in r and r["users"]:
-            r["nickname"] = r["users"].get("nickname", "알 수 없음")
-        else:
-            r["nickname"] = "알 수 없음"
+        # 데이터 정규화: users 정보를 관리자 웹에서 쓰기 쉽게 평탄화
+        user = r.get("users") or {}
+        r["user_db_id"] = user.get("id")
+        r["kakao_id"] = user.get("kakao_id")
+        r["nickname"] = user.get("nickname") or "사용자"
+        r["user_label"] = build_user_label(r["nickname"], r["kakao_id"])
 
         if r["status"] == "completed" and r["resolved_at"]:
             resolved_time = datetime.fromisoformat(r["resolved_at"].replace("Z", "+00:00"))
@@ -138,6 +213,17 @@ async def get_departments():
     supabase = get_supabase()
     result = await supabase.table("departments").select("*").order("id").execute()
     return result.data
+
+@app.get("/reverse-geocode")
+async def reverse_geocode(lat: float, lng: float):
+    """좌표를 사람이 읽을 수 있는 주소로 변환"""
+    if not KAKAO_REST_API_KEY:
+        raise HTTPException(status_code=500, detail="KAKAO_REST_API_KEY가 설정되지 않았습니다.")
+
+    address = reverse_geocode_address(lat, lng)
+    if not address:
+        raise HTTPException(status_code=502, detail="주소 변환에 실패했습니다.")
+    return {"success": True, "address": address}
 
 @app.get("/get-reports/{kakao_id}")
 async def get_my_reports(kakao_id: str):
@@ -159,14 +245,19 @@ async def update_status(
     """민원 상태 변경 (pending, processing, completed, rejected)"""
     if status not in ["pending", "processing", "completed", "rejected"]:
         raise HTTPException(status_code=400, detail="지원하지 않는 상태값입니다.")
+    if status == "rejected" and not rejection_reason:
+        raise HTTPException(status_code=400, detail="반려 사유가 필요합니다.")
 
     supabase = get_supabase()
     update_data = {"status": status}
-    
-    if status in ["processing", "completed", "rejected"]:
-        update_data["resolved_at"] = datetime.now(timezone.utc).isoformat()
-        
-    if status == "rejected" and rejection_reason:
+
+    now = datetime.now(timezone.utc).isoformat()
+    if status == "processing":
+        update_data["accepted_at"] = now
+    elif status == "completed":
+        update_data["resolved_at"] = now
+    elif status == "rejected":
+        update_data["rejected_at"] = now
         update_data["rejection_reason"] = rejection_reason
 
     result = await supabase.table("complaints").update(update_data).eq("id", report_id).execute()
@@ -232,6 +323,8 @@ async def submit_complaint(
         complaint_type = "admin"
     if complaint_type not in ["field", "admin"]:
         complaint_type = "field"
+    if not address and lat is not None and lng is not None:
+        address = reverse_geocode_address(lat, lng)
 
     # 1. 유저 ID 확보
     user_id = await get_or_create_user(kakao_id, nickname)

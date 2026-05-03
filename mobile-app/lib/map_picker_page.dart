@@ -71,7 +71,11 @@ class _MapPickerPageState extends State<MapPickerPage> {
                 ),
               ),
               padding: EdgeInsets.fromLTRB(
-                  16, MediaQuery.of(context).padding.top + 8, 16, 20),
+                16,
+                MediaQuery.of(context).padding.top + 8,
+                16,
+                20,
+              ),
               child: Row(
                 children: [
                   // 뒤로가기
@@ -83,8 +87,11 @@ class _MapPickerPageState extends State<MapPickerPage> {
                         color: Colors.white.withOpacity(0.15),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(Icons.arrow_back_ios_new,
-                          color: Colors.white, size: 18),
+                      child: const Icon(
+                        Icons.arrow_back_ios_new,
+                        color: Colors.white,
+                        size: 18,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -129,7 +136,7 @@ class _MapPickerPageState extends State<MapPickerPage> {
             ),
           ),
 
-          // ── 4. 하단 좌표 표시 + 확인 버튼
+          // ── 4. 하단 위치 안내 + 확인 버튼
           Positioned(
             bottom: 0,
             left: 0,
@@ -143,14 +150,20 @@ class _MapPickerPageState extends State<MapPickerPage> {
                 ),
               ),
               padding: EdgeInsets.fromLTRB(
-                  20, 30, 20, MediaQuery.of(context).padding.bottom + 20),
+                20,
+                30,
+                20,
+                MediaQuery.of(context).padding.bottom + 20,
+              ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   // 안내 문구
                   Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 8),
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.black54,
                       borderRadius: BorderRadius.circular(20),
@@ -166,12 +179,22 @@ class _MapPickerPageState extends State<MapPickerPage> {
                   ),
                   const SizedBox(height: 12),
 
-                  // 현재 좌표 표시
-                  Text(
-                    '${_selectedLat.toStringAsFixed(5)}, ${_selectedLng.toStringAsFixed(5)}',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.7),
-                      fontSize: 11,
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black38,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Text(
+                      '중앙 핀 위치가 주소로 저장됩니다',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.78),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 16),

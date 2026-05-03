@@ -37,6 +37,7 @@ dependencies:
   geolocator: ^14.0.2
   record: ^6.2.0
   audioplayers: ^6.6.0
+  path_provider: ^2.1.5
   dio: ^5.9.2
   permission_handler: ^12.0.1
   ffmpeg_kit_flutter_new: ^4.1.0

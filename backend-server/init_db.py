@@ -51,11 +51,14 @@ CREATE TABLE IF NOT EXISTS complaints (
     complaint_type VARCHAR(20) DEFAULT 'field'
                   CHECK (complaint_type IN ('field', 'admin')),
     status      VARCHAR(20) DEFAULT 'pending'
-                  CHECK (status IN ('pending', 'processing', 'completed')),
+                  CHECK (status IN ('pending', 'processing', 'completed', 'rejected')),
     audio_path  TEXT,
     attachment_urls TEXT[] DEFAULT '{}',
     attachment_note TEXT,
+    rejection_reason TEXT,
     created_at  TIMESTAMPTZ DEFAULT NOW(),
+    accepted_at TIMESTAMPTZ,
+    rejected_at TIMESTAMPTZ,
     resolved_at TIMESTAMPTZ
 );
 
@@ -63,6 +66,9 @@ ALTER TABLE complaints ADD COLUMN IF NOT EXISTS address TEXT;
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS complaint_type VARCHAR(20) DEFAULT 'field';
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS attachment_urls TEXT[] DEFAULT '{}';
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS attachment_note TEXT;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
 
 UPDATE complaints
 SET complaint_type = 'admin'
@@ -97,6 +103,8 @@ CREATE INDEX IF NOT EXISTS idx_complaints_user   ON complaints(user_id);
 CREATE INDEX IF NOT EXISTS idx_complaints_status ON complaints(status);
 CREATE INDEX IF NOT EXISTS idx_complaints_gps    ON complaints(lat, lng);
 CREATE INDEX IF NOT EXISTS idx_complaints_dept   ON complaints(department);
+CREATE INDEX IF NOT EXISTS idx_complaints_accepted_at ON complaints(accepted_at);
+CREATE INDEX IF NOT EXISTS idx_complaints_rejected_at ON complaints(rejected_at);
 
 INSERT INTO departments (key, label, icon, color, keywords, tasks)
 VALUES

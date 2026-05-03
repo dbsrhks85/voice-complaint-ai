@@ -486,7 +486,9 @@ function App() {
 
                   {/* 작성자 정보 */}
                   <div className="card-user-info">
-                    <span className="user-nickname">👤 {report.nickname}</span>
+                    <span className="user-nickname">
+                      👤 {report.user_label || report.nickname || '사용자'}
+                    </span>
                   </div>
 
                   {/* 제목 */}
@@ -671,8 +673,10 @@ function App() {
                 <h3 className="section-title">작성자 정보</h3>
                 <div className="info-grid">
                   <div className="info-item">
-                    <span className="info-label">닉네임</span>
-                    <span className="info-value">{selectedReport.nickname}</span>
+                    <span className="info-label">민원인</span>
+                    <span className="info-value">
+                      {selectedReport.user_label || selectedReport.nickname || '사용자'}
+                    </span>
                   </div>
                   <div className="info-item">
                     <span className="info-label">접수 일시</span>

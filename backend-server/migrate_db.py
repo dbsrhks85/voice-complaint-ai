@@ -12,6 +12,8 @@ project_ref = SUPABASE_URL.replace("https://", "").split(".")[0]
 SQL = """
 -- 1. 반려 사유 컬럼 추가
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS accepted_at TIMESTAMPTZ;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ;
 
 -- 2. 상태 제약 조건 업데이트 (rejected 추가)
 DO $$
@@ -32,6 +34,9 @@ BEGIN
         ADD CONSTRAINT complaints_status_check
         CHECK (status IN ('pending', 'processing', 'completed', 'rejected'));
 END $$;
+
+CREATE INDEX IF NOT EXISTS idx_complaints_accepted_at ON complaints(accepted_at);
+CREATE INDEX IF NOT EXISTS idx_complaints_rejected_at ON complaints(rejected_at);
 """
 
 def run():

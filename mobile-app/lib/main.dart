@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:geolocator/geolocator.dart';
 import 'package:record/record.dart';
 import 'package:audioplayers/audioplayers.dart';
@@ -7,12 +8,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:dio/dio.dart';
 import 'dart:io';
 import 'dart:async';
-import 'dart:convert';
 import 'services/audio_normalizer.dart';
 import 'constants.dart';
 import 'config.dart'; // ← 서버 주소는 config.dart에서 관리 (git 제외)
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:kakao_map_plugin/kakao_map_plugin.dart';
 import 'map_picker_page.dart';
@@ -20,22 +19,22 @@ import 'map_picker_page.dart';
 // ── Cloud Dancer 디자인 시스템 ──────────────────────
 class AppColors {
   // Cloud Dancer (PANTONE 11-4201 TCX) 기반 팔레트
-  static const Color cloudDancer = Color(0xFFECEAE4);   // 메인 배경
-  static const Color cloudSoft   = Color(0xFFF5F4F0);   // 카드 배경
-  static const Color cloudDeep   = Color(0xFFD8D4CB);   // 구분선/보더
-  static const Color cloudWarm   = Color(0xFFC8C3B5);   // 비활성 아이콘
+  static const Color cloudDancer = Color(0xFFECEAE4); // 메인 배경
+  static const Color cloudSoft = Color(0xFFF5F4F0); // 카드 배경
+  static const Color cloudDeep = Color(0xFFD8D4CB); // 구분선/보더
+  static const Color cloudWarm = Color(0xFFC8C3B5); // 비활성 아이콘
 
   // 포인트 컬러 (민원이 넥타이 & 배지의 스틸 블루)
-  static const Color accentBlue  = Color(0xFF3A6EA5);   // 주 액션
-  static const Color accentLight = Color(0xFF5B8FCC);   // 호버/강조
-  static const Color accentDeep  = Color(0xFF254E82);   // 헤더
+  static const Color accentBlue = Color(0xFF3A6EA5); // 주 액션
+  static const Color accentLight = Color(0xFF5B8FCC); // 호버/강조
+  static const Color accentDeep = Color(0xFF254E82); // 헤더
 
   // 상태 컬러
-  static const Color recordRed   = Color(0xFFE05252);   // 녹음 중
-  static const Color successGreen= Color(0xFF4A9E7F);   // 성공
-  static const Color textDark    = Color(0xFF2C2C2C);   // 기본 텍스트
-  static const Color textMid     = Color(0xFF6E6B62);   // 보조 텍스트
-  static const Color textLight   = Color(0xFF9E9B93);   // 힌트 텍스트
+  static const Color recordRed = Color(0xFFE05252); // 녹음 중
+  static const Color successGreen = Color(0xFF4A9E7F); // 성공
+  static const Color textDark = Color(0xFF2C2C2C); // 기본 텍스트
+  static const Color textMid = Color(0xFF6E6B62); // 보조 텍스트
+  static const Color textLight = Color(0xFF9E9B93); // 힌트 텍스트
 }
 
 Future<void> main() async {
@@ -83,10 +82,12 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   final String _kServerUrl = kServerUrl; // config.dart에서 서버 주소 참조
-  
+
   // 로그인 상태
   bool _isLoggedIn = false;
   User? _kakaoUser;
+  List<Map<String, dynamic>> _myReports = [];
+  bool _isLoadingMyReports = false;
 
   String _locationMessage = AppMessages.locationLoading;
   bool _isRecording = false;
@@ -100,11 +101,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   // STT 전송 상태
   bool _isSendingSTT = false;
-  String? _sttSavedDir;
 
   // STT 재확인 흐름을 위한 상태
-  bool _isSubmitting = false;       // NLP + DB 접수 처리 중 여부
-  Position? _currentPosition;       // 최신 GPS 위치 (민원 제출 시 활용)
+  bool _isSubmitting = false; // NLP + DB 접수 처리 중 여부
+  Position? _currentPosition; // 최신 GPS 위치 (민원 제출 시 활용)
 
   // VAD(침묵 감지)를 위한 변수들
   StreamSubscription<Amplitude>? _amplitudeSub;
@@ -168,23 +168,22 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   Future<void> _loginWithKakao() async {
     try {
       bool isInstalled = await isKakaoTalkInstalled();
-      
+
       if (isInstalled) {
         await UserApi.instance.loginWithKakaoTalk();
       } else {
         await UserApi.instance.loginWithKakaoAccount();
       }
-      
-      User user = await UserApi.instance.me();
+
+      User user = await _fetchKakaoUserWithProfileConsent();
       setState(() {
         _isLoggedIn = true;
         _kakaoUser = user;
       });
-      _showSnack('${user.kakaoAccount?.profile?.nickname ?? '사용자'}님 환영합니다!');
-      
+      _showSnack('${_kakaoNickname(user)}님 환영합니다!');
+
       // 로그인 후 서버에 유저 정보 등록 (옵션)
       // _registerUserToServer(user);
-      
     } catch (e) {
       debugPrint('카카오 로그인 에러: $e');
       _showSnack('카카오 로그인에 실패했습니다. ($e)');
@@ -232,9 +231,13 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       Position position = await Geolocator.getCurrentPosition(
         locationSettings: locationSettings,
       );
+      final address = await _reverseGeocode(
+        position.latitude,
+        position.longitude,
+      );
       setState(() {
         _currentPosition = position;
-        _locationMessage = "위도: ${position.latitude.toStringAsFixed(5)}\n경도: ${position.longitude.toStringAsFixed(5)}";
+        _locationMessage = address ?? '현재 위치 주소를 찾지 못했습니다.';
       });
     } catch (e) {
       setState(() => _locationMessage = '${AppMessages.locationFailed}\n($e)');
@@ -253,7 +256,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   Future<void> _startRecording() async {
     if (await _audioRecorder.hasPermission()) {
       final directory = await getApplicationDocumentsDirectory();
-      final path = '${directory.path}/report_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      final path =
+          '${directory.path}/report_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
       const config = RecordConfig(
         encoder: AudioEncoder.aacLc,
@@ -273,16 +277,18 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       });
 
       _silenceCounter = 0;
-      _amplitudeSub = _audioRecorder.onAmplitudeChanged(const Duration(milliseconds: 100)).listen((amp) {
-        if (amp.current < _silenceThreshold) {
-          _silenceCounter++;
-          if (_silenceCounter >= _maxSilenceFrames) {
-            _stopRecording(isAutoStopped: true);
-          }
-        } else {
-          _silenceCounter = 0;
-        }
-      });
+      _amplitudeSub = _audioRecorder
+          .onAmplitudeChanged(const Duration(milliseconds: 100))
+          .listen((amp) {
+            if (amp.current < _silenceThreshold) {
+              _silenceCounter++;
+              if (_silenceCounter >= _maxSilenceFrames) {
+                _stopRecording(isAutoStopped: true);
+              }
+            } else {
+              _silenceCounter = 0;
+            }
+          });
     }
   }
 
@@ -298,7 +304,11 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       _determinePosition();
     });
 
-    _showSnack(isAutoStopped ? AppMessages.recordingAutoStop : AppMessages.recordingManualStop);
+    _showSnack(
+      isAutoStopped
+          ? AppMessages.recordingAutoStop
+          : AppMessages.recordingManualStop,
+    );
 
     if (path != null) {
       final normalizedPath = await AudioNormalizer.normalizeAudio(path);
@@ -308,9 +318,11 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       });
 
       if (mounted) {
-        _showSnack(normalizedPath != null
-            ? AppMessages.normalizeSuccess
-            : AppMessages.normalizeFailed);
+        _showSnack(
+          normalizedPath != null
+              ? AppMessages.normalizeSuccess
+              : AppMessages.normalizeFailed,
+        );
       }
     } else {
       setState(() => _isNormalizing = false);
@@ -331,6 +343,413 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      ),
+    );
+  }
+
+  String _kakaoNickname(User? user) {
+    final accountNickname = user?.kakaoAccount?.profile?.nickname?.trim();
+    if (accountNickname != null && accountNickname.isNotEmpty) {
+      return accountNickname;
+    }
+
+    final propertyNickname = user?.properties?['nickname']?.trim();
+    if (propertyNickname != null && propertyNickname.isNotEmpty) {
+      return propertyNickname;
+    }
+
+    return '사용자';
+  }
+
+  Future<User> _fetchKakaoUserWithProfileConsent() async {
+    User user = await UserApi.instance.me(
+      properties: ['kakao_account.profile'],
+    );
+
+    final needsNicknameConsent =
+        user.kakaoAccount?.profileNicknameNeedsAgreement == true ||
+        user.kakaoAccount?.profileNeedsAgreement == true;
+
+    if (_kakaoNickname(user) == '사용자' && needsNicknameConsent) {
+      try {
+        await UserApi.instance.loginWithNewScopes(['profile_nickname']);
+        user = await UserApi.instance.me(properties: ['kakao_account.profile']);
+      } catch (e) {
+        debugPrint('카카오 프로필 닉네임 추가 동의 실패: $e');
+      }
+    }
+
+    debugPrint(
+      '카카오 프로필 상태: '
+      'accountNickname=${user.kakaoAccount?.profile?.nickname}, '
+      'propertyNickname=${user.properties?['nickname']}, '
+      'profileNeedsAgreement=${user.kakaoAccount?.profileNeedsAgreement}, '
+      'profileNicknameNeedsAgreement=${user.kakaoAccount?.profileNicknameNeedsAgreement}',
+    );
+
+    return user;
+  }
+
+  Future<String?> _reverseGeocode(double lat, double lng) async {
+    try {
+      final dio = Dio();
+      final response = await dio.get(
+        '$_kServerUrl/reverse-geocode',
+        queryParameters: {'lat': lat, 'lng': lng},
+        options: Options(receiveTimeout: const Duration(seconds: 10)),
+      );
+      final data = Map<String, dynamic>.from(response.data as Map);
+      final address = data['address']?.toString().trim();
+      return (address == null || address.isEmpty) ? null : address;
+    } catch (e) {
+      debugPrint('주소 변환 실패: $e');
+      return null;
+    }
+  }
+
+  String _reportStatusLabel(String? status) {
+    switch (status) {
+      case 'pending':
+        return '민원 접수 중';
+      case 'processing':
+        return '민원 처리 중';
+      case 'completed':
+        return '민원 처리 완료';
+      case 'rejected':
+        return '민원 반려';
+      default:
+        return '상태 확인 중';
+    }
+  }
+
+  Color _reportStatusColor(String? status) {
+    switch (status) {
+      case 'pending':
+        return AppColors.accentBlue;
+      case 'processing':
+        return const Color(0xFF5B7FBA);
+      case 'completed':
+        return AppColors.successGreen;
+      case 'rejected':
+        return AppColors.recordRed;
+      default:
+        return AppColors.textMid;
+    }
+  }
+
+  IconData _reportStatusIcon(String? status) {
+    switch (status) {
+      case 'pending':
+        return Icons.hourglass_empty_rounded;
+      case 'processing':
+        return Icons.settings_suggest_outlined;
+      case 'completed':
+        return Icons.check_circle_outline;
+      case 'rejected':
+        return Icons.error_outline_rounded;
+      default:
+        return Icons.help_outline_rounded;
+    }
+  }
+
+  String _formatReportDate(dynamic raw) {
+    if (raw == null) return '-';
+    try {
+      final date = DateTime.parse(raw.toString()).toLocal();
+      final month = date.month.toString().padLeft(2, '0');
+      final day = date.day.toString().padLeft(2, '0');
+      final hour = date.hour.toString().padLeft(2, '0');
+      final minute = date.minute.toString().padLeft(2, '0');
+      return '$month.$day $hour:$minute';
+    } catch (_) {
+      return raw.toString();
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchMyReports() async {
+    final kakaoId = _kakaoUser?.id.toString();
+    if (kakaoId == null || kakaoId.isEmpty) return [];
+
+    final dio = Dio();
+    final response = await dio.get(
+      '$_kServerUrl/get-reports/$kakaoId',
+      options: Options(receiveTimeout: const Duration(seconds: 20)),
+    );
+
+    final data = response.data;
+    if (data is List) {
+      return data
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+    }
+    return [];
+  }
+
+  Future<void> _openMyReportsSheet() async {
+    if (!_isLoggedIn || _kakaoUser == null) {
+      _showSnack('로그인 후 내 민원 현황을 확인할 수 있어요.');
+      return;
+    }
+    if (_isLoadingMyReports) return;
+
+    setState(() => _isLoadingMyReports = true);
+    try {
+      final reports = await _fetchMyReports();
+      if (!mounted) return;
+      setState(() {
+        _myReports = reports;
+        _isLoadingMyReports = false;
+      });
+      _showMyReportsBottomSheet();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoadingMyReports = false);
+      _showSnack('내 민원 현황을 불러오지 못했습니다.');
+    }
+  }
+
+  void _showMyReportsBottomSheet() {
+    String selectedStatus = 'pending';
+    final statuses = ['pending', 'processing', 'completed', 'rejected'];
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setModalState) {
+          final filtered = _myReports
+              .where((report) => report['status'] == selectedStatus)
+              .toList();
+
+          return Container(
+            height: MediaQuery.of(context).size.height * 0.82,
+            decoration: const BoxDecoration(
+              color: AppColors.cloudSoft,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            ),
+            padding: EdgeInsets.fromLTRB(
+              20,
+              14,
+              20,
+              MediaQuery.of(context).padding.bottom + 20,
+            ),
+            child: Column(
+              children: [
+                Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 18),
+                  decoration: BoxDecoration(
+                    color: AppColors.cloudDeep,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.list_alt_rounded,
+                      color: AppColors.accentBlue,
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        '내 민원 현황',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.textDark,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        color: AppColors.textMid,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: statuses.map((status) {
+                      final count = _myReports
+                          .where((r) => r['status'] == status)
+                          .length;
+                      final selected = selectedStatus == status;
+                      final color = _reportStatusColor(status);
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: Text('${_reportStatusLabel(status)} $count'),
+                          selected: selected,
+                          selectedColor: color.withOpacity(0.16),
+                          backgroundColor: AppColors.cloudDancer,
+                          labelStyle: TextStyle(
+                            color: selected ? color : AppColors.textMid,
+                            fontWeight: selected
+                                ? FontWeight.w800
+                                : FontWeight.w600,
+                            fontSize: 12,
+                          ),
+                          side: BorderSide(
+                            color: selected
+                                ? color.withOpacity(0.45)
+                                : AppColors.cloudDeep,
+                          ),
+                          onSelected: (_) =>
+                              setModalState(() => selectedStatus = status),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: filtered.isEmpty
+                      ? Center(
+                          child: Text(
+                            '${_reportStatusLabel(selectedStatus)} 민원이 없습니다.',
+                            style: const TextStyle(
+                              color: AppColors.textMid,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: filtered.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 10),
+                          itemBuilder: (context, index) {
+                            final report = filtered[index];
+                            final status = report['status']?.toString();
+                            final color = _reportStatusColor(status);
+                            final title = report['title']?.toString().trim();
+                            final address = report['address']
+                                ?.toString()
+                                .trim();
+                            final rejectionReason = report['rejection_reason']
+                                ?.toString()
+                                .trim();
+
+                            return Container(
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: AppColors.cloudDancer,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: AppColors.cloudDeep),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 9,
+                                          vertical: 5,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: color.withOpacity(0.12),
+                                          borderRadius: BorderRadius.circular(
+                                            999,
+                                          ),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              _reportStatusIcon(status),
+                                              size: 13,
+                                              color: color,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              _reportStatusLabel(status),
+                                              style: TextStyle(
+                                                color: color,
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const Spacer(),
+                                      Text(
+                                        _formatReportDate(report['created_at']),
+                                        style: const TextStyle(
+                                          color: AppColors.textLight,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    (title == null || title.isEmpty)
+                                        ? '제목 없음'
+                                        : title,
+                                    style: const TextStyle(
+                                      color: AppColors.textDark,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 7),
+                                  Text(
+                                    (address == null || address.isEmpty)
+                                        ? '주소 정보 없음'
+                                        : address,
+                                    style: const TextStyle(
+                                      color: AppColors.textMid,
+                                      fontSize: 12,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                  if (status == 'rejected' &&
+                                      rejectionReason != null &&
+                                      rejectionReason.isNotEmpty) ...[
+                                    const SizedBox(height: 10),
+                                    Container(
+                                      width: double.infinity,
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.recordRed.withOpacity(
+                                          0.08,
+                                        ),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(
+                                          color: AppColors.recordRed
+                                              .withOpacity(0.2),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        '반려 사유: $rejectionReason',
+                                        style: const TextStyle(
+                                          color: AppColors.recordRed,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -366,7 +785,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           _showSnack(AppMessages.sttFetchFailed);
           return;
         }
-        _showSttConfirmBottomSheet(sttText: sttText, nlpSuggestion: nlpSuggestion);
+        _showSttConfirmBottomSheet(
+          sttText: sttText,
+          nlpSuggestion: nlpSuggestion,
+        );
       } else {
         _showSnack(result['error']?.toString() ?? AppMessages.sttFetchFailed);
       }
@@ -379,16 +801,22 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   // ──────────────────────────────────────────────────────────
   // [Step 2]  바텀시트 — STT 결과 사용자 재확인
   // ──────────────────────────────────────────────────────────
-  void _showSttConfirmBottomSheet({required String sttText, Map<String, dynamic>? nlpSuggestion}) {
+  void _showSttConfirmBottomSheet({
+    required String sttText,
+    Map<String, dynamic>? nlpSuggestion,
+  }) {
     String currentType = nlpSuggestion?['complaint_type'] ?? 'field';
     List<File> attachedFiles = [];
-    final TextEditingController textController = TextEditingController(text: sttText);
+    final TextEditingController textController = TextEditingController(
+      text: sttText,
+    );
 
     // 위치 관련 상태
     bool locationConsented = false;
     bool isLoadingGps = false;
     double? selectedLat;
     double? selectedLng;
+    String? selectedAddress;
     const double defaultLat = 37.8813; // 춘천시청 기본 좌표
     const double defaultLng = 127.7298;
 
@@ -398,15 +826,19 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       backgroundColor: Colors.transparent,
       builder: (ctx) => StatefulBuilder(
         builder: (BuildContext context, StateSetter setModalState) {
-
           Future<void> onConsentYes() async {
-            setModalState(() { locationConsented = true; isLoadingGps = true; });
+            setModalState(() {
+              locationConsented = true;
+              isLoadingGps = true;
+            });
             await _determinePosition();
             final initLat = _currentPosition?.latitude ?? defaultLat;
             final initLng = _currentPosition?.longitude ?? defaultLng;
+            final address = await _reverseGeocode(initLat, initLng);
             setModalState(() {
               selectedLat = initLat;
               selectedLng = initLng;
+              selectedAddress = address;
               isLoadingGps = false;
             });
           }
@@ -417,7 +849,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
               borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
             ),
             padding: EdgeInsets.fromLTRB(
-              24, 16, 24,
+              24,
+              16,
+              24,
               MediaQuery.of(context).viewInsets.bottom + 36,
             ),
             child: SingleChildScrollView(
@@ -425,15 +859,27 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
-                    width: 36, height: 4,
+                    width: 36,
+                    height: 4,
                     margin: const EdgeInsets.only(bottom: 24),
-                    decoration: BoxDecoration(color: AppColors.cloudDeep, borderRadius: BorderRadius.circular(2)),
+                    decoration: BoxDecoration(
+                      color: AppColors.cloudDeep,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
-                  const Text(AppMessages.sttConfirmTitle,
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textDark)),
+                  const Text(
+                    AppMessages.sttConfirmTitle,
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textDark,
+                    ),
+                  ),
                   const SizedBox(height: 6),
-                  const Text("아래 민원 내용을 확인하고 알맞은 유형을 선택해주세요.",
-                      style: TextStyle(fontSize: 13, color: AppColors.textMid)),
+                  const Text(
+                    "아래 민원 내용을 확인하고 알맞은 유형을 선택해주세요.",
+                    style: TextStyle(fontSize: 13, color: AppColors.textMid),
+                  ),
                   const SizedBox(height: 20),
 
                   // ── 유형 선택 토글
@@ -444,7 +890,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                         label: const Text('📍 현장 민원'),
                         selected: currentType == 'field',
                         selectedColor: AppColors.accentBlue.withOpacity(0.2),
-                        onSelected: (_) => setModalState(() { currentType = 'field'; }),
+                        onSelected: (_) => setModalState(() {
+                          currentType = 'field';
+                        }),
                       ),
                       const SizedBox(width: 12),
                       ChoiceChip(
@@ -456,6 +904,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                           locationConsented = false;
                           selectedLat = null;
                           selectedLng = null;
+                          selectedAddress = null;
                         }),
                       ),
                     ],
@@ -479,8 +928,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                         contentPadding: EdgeInsets.all(18),
                         hintText: '수정할 민원 내용을 입력하세요',
                       ),
-                      style: const TextStyle(fontSize: 15, color: AppColors.textDark,
-                          fontWeight: FontWeight.w500, height: 1.65),
+                      style: const TextStyle(
+                        fontSize: 15,
+                        color: AppColors.textDark,
+                        fontWeight: FontWeight.w500,
+                        height: 1.65,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -494,16 +947,29 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                         decoration: BoxDecoration(
                           color: AppColors.accentBlue.withOpacity(0.07),
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: AppColors.accentBlue.withOpacity(0.25)),
+                          border: Border.all(
+                            color: AppColors.accentBlue.withOpacity(0.25),
+                          ),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(AppMessages.locationConsentTitle,
-                                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.textDark)),
+                            const Text(
+                              AppMessages.locationConsentTitle,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textDark,
+                              ),
+                            ),
                             const SizedBox(height: 4),
-                            const Text(AppMessages.locationConsentSub,
-                                style: TextStyle(fontSize: 12, color: AppColors.textMid)),
+                            const Text(
+                              AppMessages.locationConsentSub,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: AppColors.textMid,
+                              ),
+                            ),
                             const SizedBox(height: 12),
                             Row(
                               children: [
@@ -513,12 +979,21 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: AppColors.accentBlue,
                                       foregroundColor: Colors.white,
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                      padding: const EdgeInsets.symmetric(vertical: 10),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 10,
+                                      ),
                                       elevation: 0,
                                     ),
-                                    child: const Text(AppMessages.locationConsentYes,
-                                        style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                                    child: const Text(
+                                      AppMessages.locationConsentYes,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 13,
+                                      ),
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(width: 8),
@@ -527,12 +1002,23 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                                     onPressed: () {},
                                     style: OutlinedButton.styleFrom(
                                       foregroundColor: AppColors.textMid,
-                                      side: const BorderSide(color: AppColors.cloudDeep),
-                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                      padding: const EdgeInsets.symmetric(vertical: 10),
+                                      side: const BorderSide(
+                                        color: AppColors.cloudDeep,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 10,
+                                      ),
                                     ),
-                                    child: const Text(AppMessages.locationConsentNo,
-                                        style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                                    child: const Text(
+                                      AppMessages.locationConsentNo,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 13,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ],
@@ -547,11 +1033,22 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              SizedBox(width: 16, height: 16,
-                                  child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accentBlue)),
+                              SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppColors.accentBlue,
+                                ),
+                              ),
                               SizedBox(width: 10),
-                              Text(AppMessages.locationGpsWaiting,
-                                  style: TextStyle(fontSize: 13, color: AppColors.textMid)),
+                              Text(
+                                AppMessages.locationGpsWaiting,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: AppColors.textMid,
+                                ),
+                              ),
                             ],
                           ),
                         )
@@ -567,26 +1064,51 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                                   context,
                                   MaterialPageRoute(
                                     builder: (_) => MapPickerPage(
-                                      initialLat: _currentPosition?.latitude ?? defaultLat,
-                                      initialLng: _currentPosition?.longitude ?? defaultLng,
+                                      initialLat:
+                                          _currentPosition?.latitude ??
+                                          defaultLat,
+                                      initialLng:
+                                          _currentPosition?.longitude ??
+                                          defaultLng,
                                     ),
                                   ),
                                 );
                                 if (result != null) {
                                   setModalState(() {
+                                    isLoadingGps = true;
+                                  });
+                                  final address = await _reverseGeocode(
+                                    result.latitude,
+                                    result.longitude,
+                                  );
+                                  setModalState(() {
                                     selectedLat = result.latitude;
                                     selectedLng = result.longitude;
+                                    selectedAddress = address;
+                                    isLoadingGps = false;
                                   });
                                 }
                               },
                               icon: const Icon(Icons.map_outlined, size: 20),
-                              label: const Text('지도에서 위치 선택하기',
-                                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                              label: const Text(
+                                '지도에서 위치 선택하기',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 14,
+                                ),
+                              ),
                               style: OutlinedButton.styleFrom(
                                 foregroundColor: AppColors.accentBlue,
-                                side: const BorderSide(color: AppColors.accentBlue, width: 1.5),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                side: const BorderSide(
+                                  color: AppColors.accentBlue,
+                                  width: 1.5,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
+                                ),
                               ),
                             ),
                           ),
@@ -598,22 +1120,38 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                             decoration: BoxDecoration(
                               color: const Color(0xFFE05252).withOpacity(0.08),
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: const Color(0xFFE05252).withOpacity(0.3)),
+                              border: Border.all(
+                                color: const Color(0xFFE05252).withOpacity(0.3),
+                              ),
                             ),
                             child: Row(
                               children: [
-                                const Icon(Icons.location_pin, color: Color(0xFFE05252), size: 20),
+                                const Icon(
+                                  Icons.location_pin,
+                                  color: Color(0xFFE05252),
+                                  size: 20,
+                                ),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      const Text(AppMessages.mapPinConfirmed,
-                                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
-                                              color: Color(0xFFE05252))),
+                                      const Text(
+                                        AppMessages.mapPinConfirmed,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w700,
+                                          color: Color(0xFFE05252),
+                                        ),
+                                      ),
                                       Text(
-                                        '${selectedLat!.toStringAsFixed(5)}, ${selectedLng!.toStringAsFixed(5)}',
-                                        style: const TextStyle(fontSize: 11, color: AppColors.textMid),
+                                        selectedAddress ?? '주소를 찾지 못했습니다.',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: AppColors.textMid,
+                                          height: 1.35,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -632,13 +1170,27 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                                     );
                                     if (result != null) {
                                       setModalState(() {
+                                        isLoadingGps = true;
+                                      });
+                                      final address = await _reverseGeocode(
+                                        result.latitude,
+                                        result.longitude,
+                                      );
+                                      setModalState(() {
                                         selectedLat = result.latitude;
                                         selectedLng = result.longitude;
+                                        selectedAddress = address;
+                                        isLoadingGps = false;
                                       });
                                     }
                                   },
-                                  child: const Text('변경',
-                                      style: TextStyle(fontSize: 12, color: AppColors.accentBlue)),
+                                  child: const Text(
+                                    '변경',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: AppColors.accentBlue,
+                                    ),
+                                  ),
                                 ),
                               ],
                             ),
@@ -651,9 +1203,15 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                                 locationConsented = false;
                                 selectedLat = null;
                                 selectedLng = null;
+                                selectedAddress = null;
                               }),
-                              child: const Text('위치 선택 취소',
-                                  style: TextStyle(fontSize: 12, color: AppColors.textMid)),
+                              child: const Text(
+                                '위치 선택 취소',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.textMid,
+                                ),
+                              ),
                             ),
                           ),
                         ],
@@ -668,14 +1226,24 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                     child: TextButton.icon(
                       onPressed: () async {
                         final picker = ImagePicker();
-                        final XFile? result = await picker.pickImage(source: ImageSource.gallery);
+                        final XFile? result = await picker.pickImage(
+                          source: ImageSource.gallery,
+                        );
                         if (result != null) {
-                          setModalState(() => attachedFiles.add(File(result.path)));
+                          setModalState(
+                            () => attachedFiles.add(File(result.path)),
+                          );
                         }
                       },
-                      icon: const Icon(Icons.attach_file, size: 20, color: AppColors.textMid),
-                      label: const Text('파일/사진 첨부하기 (선택)',
-                          style: TextStyle(color: AppColors.textMid)),
+                      icon: const Icon(
+                        Icons.attach_file,
+                        size: 20,
+                        color: AppColors.textMid,
+                      ),
+                      label: const Text(
+                        '파일/사진 첨부하기 (선택)',
+                        style: TextStyle(color: AppColors.textMid),
+                      ),
                     ),
                   ),
                   if (attachedFiles.isNotEmpty)
@@ -683,8 +1251,13 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                       alignment: Alignment.centerLeft,
                       child: Padding(
                         padding: const EdgeInsets.only(left: 12, bottom: 8),
-                        child: Text('첨부됨: ${attachedFiles.last.path.split('/').last}',
-                            style: const TextStyle(fontSize: 12, color: AppColors.accentBlue)),
+                        child: Text(
+                          '첨부됨: ${attachedFiles.last.path.split('/').last}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.accentBlue,
+                          ),
+                        ),
                       ),
                     ),
 
@@ -703,17 +1276,34 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                           department: nlpSuggestion?['department'],
                           title: nlpSuggestion?['title'],
                           attachedFiles: attachedFiles,
-                          selectedLat: (currentType == 'field' && locationConsented) ? selectedLat : null,
-                          selectedLng: (currentType == 'field' && locationConsented) ? selectedLng : null,
+                          selectedLat:
+                              (currentType == 'field' && locationConsented)
+                              ? selectedLat
+                              : null,
+                          selectedLng:
+                              (currentType == 'field' && locationConsented)
+                              ? selectedLng
+                              : null,
+                          selectedAddress:
+                              (currentType == 'field' && locationConsented)
+                              ? selectedAddress
+                              : null,
                         );
                       },
                       icon: const Icon(Icons.check_circle_outline, size: 20),
-                      label: const Text(AppMessages.sttConfirmYes,
-                          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                      label: const Text(
+                        AppMessages.sttConfirmYes,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                      ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.accentBlue,
                         foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         elevation: 0,
                       ),
@@ -727,16 +1317,29 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                     child: OutlinedButton.icon(
                       onPressed: () {
                         Navigator.pop(ctx);
-                        setState(() { _filePath = null; _normalizedFilePath = null; });
+                        setState(() {
+                          _filePath = null;
+                          _normalizedFilePath = null;
+                        });
                         _showSnack(AppMessages.sttConfirmNoSnack);
                       },
                       icon: const Icon(Icons.mic_outlined, size: 20),
-                      label: const Text(AppMessages.sttConfirmNo,
-                          style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                      label: const Text(
+                        AppMessages.sttConfirmNo,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 15,
+                        ),
+                      ),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppColors.textMid,
-                        side: const BorderSide(color: AppColors.cloudDeep, width: 1.5),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        side: const BorderSide(
+                          color: AppColors.cloudDeep,
+                          width: 1.5,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
                         padding: const EdgeInsets.symmetric(vertical: 16),
                       ),
                     ),
@@ -745,7 +1348,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
               ),
             ),
           );
-        }
+        },
       ),
     );
   }
@@ -760,8 +1363,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     String? department,
     String? title,
     List<File> attachedFiles = const [],
-    double? selectedLat,  // 사용자가 지도 핀으로 선택한 위도 (field+동의 시)
-    double? selectedLng,  // 사용자가 지도 핀으로 선택한 경도 (field+동의 시)
+    double? selectedLat, // 사용자가 지도 핀으로 선택한 위도 (field+동의 시)
+    double? selectedLng, // 사용자가 지도 핀으로 선택한 경도 (field+동의 시)
+    String? selectedAddress,
   }) async {
     setState(() => _isSubmitting = true);
 
@@ -772,9 +1376,11 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       final mapData = <String, dynamic>{
         'stt_text': sttText,
         'kakao_id': _kakaoUser?.id.toString() ?? 'anonymous',
-        'nickname': _kakaoUser?.kakaoAccount?.profile?.nickname ?? '', // 기능2: 닉네임 DB 저장
+        'nickname': _kakaoNickname(_kakaoUser), // 기능2: 닉네임 DB 저장
         if (selectedLat != null) 'lat': selectedLat.toString(),
         if (selectedLng != null) 'lng': selectedLng.toString(),
+        if (selectedAddress != null && selectedAddress.isNotEmpty)
+          'address': selectedAddress,
         if (complaintType != null) 'complaint_type': complaintType,
         if (category != null) 'category': category,
         if (department != null) 'department': department,
@@ -786,7 +1392,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           await MultipartFile.fromFile(
             attachedFiles.first.path,
             filename: attachedFiles.first.path.split('/').last,
-          )
+          ),
         ];
       }
 
@@ -818,8 +1424,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       _showSnack(AppMessages.sttSubmitFailed);
     }
   }
-
-
 
   Future<void> _playRecording() async {
     if (_filePath != null) {
@@ -857,7 +1461,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
               child: Align(
                 alignment: const Alignment(0, -0.45), // 화면 위쪽으로 더 올림
                 child: AnimatedBuilder(
-                  animation: _isRecording ? _pulseAnimation : const AlwaysStoppedAnimation(1.0),
+                  animation: _isRecording
+                      ? _pulseAnimation
+                      : const AlwaysStoppedAnimation(1.0),
                   builder: (context, child) => Transform.scale(
                     scale: _isRecording ? _pulseAnimation.value : 1.0,
                     child: child,
@@ -865,7 +1471,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                   child: Builder(
                     builder: (context) {
                       // 화면 너비의 190%를 최대값으로 제한 (2배 크기)
-                      final size = (MediaQuery.of(context).size.width * 1.9).clamp(0.0, 1120.0);
+                      final size = (MediaQuery.of(context).size.width * 1.9)
+                          .clamp(0.0, 1120.0);
                       return Stack(
                         alignment: Alignment.center,
                         children: [
@@ -879,7 +1486,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
                                   color: AppColors.recordRed.withOpacity(
-                                      0.07 - _waveAnimation.value * 0.05),
+                                    0.07 - _waveAnimation.value * 0.05,
+                                  ),
                                 ),
                               ),
                             ),
@@ -917,12 +1525,21 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.lock_outline, size: 60, color: AppColors.accentBlue),
+                        const Icon(
+                          Icons.lock_outline,
+                          size: 60,
+                          color: AppColors.accentBlue,
+                        ),
                         const SizedBox(height: 16),
                         const Text(
                           '서비스 이용을 위해\n로그인이 필요합니다.',
                           textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textDark, height: 1.4),
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textDark,
+                            height: 1.4,
+                          ),
                         ),
                         const SizedBox(height: 32),
                         ElevatedButton(
@@ -931,15 +1548,26 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                             backgroundColor: const Color(0xFFFEE500), // 카카오 노란색
                             foregroundColor: Colors.black87,
                             elevation: 0,
-                            padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 40,
+                              vertical: 14,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
                           child: const Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(Icons.chat_bubble_rounded, size: 18),
                               SizedBox(width: 8),
-                              Text('카카오로 3초만에 시작하기', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                              Text(
+                                '카카오로 3초만에 시작하기',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 15,
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -960,6 +1588,32 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Row(
         children: [
+          GestureDetector(
+            onTap: _openMyReportsSheet,
+            child: Container(
+              width: 36,
+              height: 36,
+              margin: const EdgeInsets.only(right: 10),
+              decoration: BoxDecoration(
+                color: AppColors.cloudSoft,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.cloudDeep),
+              ),
+              child: _isLoadingMyReports
+                  ? const Padding(
+                      padding: EdgeInsets.all(10),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.accentBlue,
+                      ),
+                    )
+                  : const Icon(
+                      Icons.menu_rounded,
+                      color: AppColors.accentBlue,
+                      size: 20,
+                    ),
+            ),
+          ),
           // 앱 로고/이름
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -972,7 +1626,15 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
               children: [
                 Icon(Icons.smart_toy_outlined, color: Colors.white, size: 14),
                 SizedBox(width: 5),
-                Text(AppMessages.brandName, style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
+                Text(
+                  AppMessages.brandName,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                  ),
+                ),
               ],
             ),
           ),
@@ -984,7 +1646,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
               decoration: BoxDecoration(
                 color: AppColors.accentBlue.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppColors.accentBlue.withOpacity(0.3)),
+                border: Border.all(
+                  color: AppColors.accentBlue.withOpacity(0.3),
+                ),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -1040,11 +1704,19 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             children: [
               Icon(Icons.verified_outlined, size: 12, color: Colors.white70),
               SizedBox(width: 5),
-              Text(AppMessages.mascotName,
-                  style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
+              Text(
+                AppMessages.mascotName,
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
               SizedBox(width: 5),
-              Text(AppMessages.mascotSubtitle,
-                  style: TextStyle(color: Colors.white70, fontSize: 10)),
+              Text(
+                AppMessages.mascotSubtitle,
+                style: TextStyle(color: Colors.white70, fontSize: 10),
+              ),
             ],
           ),
         ),
@@ -1056,7 +1728,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           margin: const EdgeInsets.symmetric(horizontal: 32),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
           decoration: BoxDecoration(
-            color: AppColors.cloudSoft.withOpacity(0.92), // 살짝 투명 → 캐릭터가 은은하게 비침
+            color: AppColors.cloudSoft.withOpacity(
+              0.92,
+            ), // 살짝 투명 → 캐릭터가 은은하게 비침
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: AppColors.cloudDeep),
           ),
@@ -1074,14 +1748,16 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                 _isRecording
                     ? AppMessages.listeningMain
                     : _isSendingSTT
-                        ? AppMessages.sttAnalyzing
-                        : _isSubmitting
-                            ? AppMessages.sttSubmitting
-                            : AppMessages.idleGuide,
+                    ? AppMessages.sttAnalyzing
+                    : _isSubmitting
+                    ? AppMessages.sttSubmitting
+                    : AppMessages.idleGuide,
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: _isRecording ? AppColors.recordRed : AppColors.textDark,
+                  color: _isRecording
+                      ? AppColors.recordRed
+                      : AppColors.textDark,
                 ),
               ),
               if (!_isRecording && !_isSendingSTT && !_isSubmitting)
@@ -1101,7 +1777,20 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   // 파형 바 시각화
   Widget _buildWaveBars() {
-    final heights = [0.4, 0.7, 1.0, 0.6, 0.9, 0.5, 0.8, 0.4, 0.7, 1.0, 0.6, 0.5];
+    final heights = [
+      0.4,
+      0.7,
+      1.0,
+      0.6,
+      0.9,
+      0.5,
+      0.8,
+      0.4,
+      0.7,
+      1.0,
+      0.6,
+      0.5,
+    ];
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.end,
@@ -1139,13 +1828,21 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
               color: AppColors.accentBlue.withOpacity(0.1),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(Icons.location_on_outlined, color: AppColors.accentBlue, size: 16),
+            child: const Icon(
+              Icons.location_on_outlined,
+              color: AppColors.accentBlue,
+              size: 16,
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               _locationMessage,
-              style: const TextStyle(fontSize: 12, color: AppColors.textMid, height: 1.4),
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.textMid,
+                height: 1.4,
+              ),
             ),
           ),
           GestureDetector(
@@ -1156,7 +1853,11 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                 color: AppColors.cloudDeep.withOpacity(0.5),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Icon(Icons.refresh, size: 14, color: AppColors.textMid),
+              child: const Icon(
+                Icons.refresh,
+                size: 14,
+                color: AppColors.textMid,
+              ),
             ),
           ),
         ],
@@ -1200,7 +1901,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               // 원본 재생 버튼
-              if (!_isRecording && !_isSendingSTT && !_isSubmitting && _filePath != null)
+              if (!_isRecording &&
+                  !_isSendingSTT &&
+                  !_isSubmitting &&
+                  _filePath != null)
                 _buildPlayButton(
                   onTap: _playRecording,
                   label: '원본',
@@ -1209,28 +1913,37 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                   size: 52,
                 ),
 
-              if (!_isRecording && !_isSendingSTT && !_isSubmitting && _filePath != null)
+              if (!_isRecording &&
+                  !_isSendingSTT &&
+                  !_isSubmitting &&
+                  _filePath != null)
                 const SizedBox(width: 16),
 
               // 메인 녹음 버튼
               _buildMainRecordButton(),
 
-              if (!_isRecording && !_isSendingSTT && !_isSubmitting && _filePath != null)
+              if (!_isRecording &&
+                  !_isSendingSTT &&
+                  !_isSubmitting &&
+                  _filePath != null)
                 const SizedBox(width: 16),
 
               // 정규화 재생 버튼
-              if (!_isRecording && !_isSendingSTT && !_isSubmitting && _filePath != null)
+              if (!_isRecording &&
+                  !_isSendingSTT &&
+                  !_isSubmitting &&
+                  _filePath != null)
                 _isNormalizing
                     ? _buildLoadingButton(size: 52)
                     : (_normalizedFilePath != null
-                        ? _buildPlayButton(
-                            onTap: _playNormalizedRecording,
-                            label: '정규화',
-                            icon: Icons.tune_outlined,
-                            color: AppColors.accentBlue,
-                            size: 52,
-                          )
-                        : const SizedBox(width: 52)),
+                          ? _buildPlayButton(
+                              onTap: _playNormalizedRecording,
+                              label: '정규화',
+                              icon: Icons.tune_outlined,
+                              color: AppColors.accentBlue,
+                              size: 52,
+                            )
+                          : const SizedBox(width: 52)),
             ],
           ),
 
@@ -1238,7 +1951,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
           // 버튼 설명 레이블
           Text(
-            _isRecording ? AppMessages.hintTapToStop : AppMessages.hintTapToRecord,
+            _isRecording
+                ? AppMessages.hintTapToStop
+                : AppMessages.hintTapToRecord,
             style: const TextStyle(fontSize: 11, color: AppColors.textLight),
           ),
         ],
@@ -1251,7 +1966,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     return GestureDetector(
       onTap: _toggleRecording,
       child: AnimatedBuilder(
-        animation: _isRecording ? _pulseAnimation : const AlwaysStoppedAnimation(1.0),
+        animation: _isRecording
+            ? _pulseAnimation
+            : const AlwaysStoppedAnimation(1.0),
         builder: (context, child) {
           return Transform.scale(
             scale: _isRecording ? _pulseAnimation.value : 1.0,
@@ -1272,7 +1989,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             ),
             boxShadow: [
               BoxShadow(
-                color: (_isRecording ? AppColors.recordRed : AppColors.accentBlue).withOpacity(0.35),
+                color:
+                    (_isRecording ? AppColors.recordRed : AppColors.accentBlue)
+                        .withOpacity(0.35),
                 blurRadius: 16,
                 spreadRadius: 2,
                 offset: const Offset(0, 4),
@@ -1313,7 +2032,14 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             child: Icon(icon, color: color, size: 22),
           ),
           const SizedBox(height: 5),
-          Text(label, style: TextStyle(fontSize: 10, color: AppColors.textMid, fontWeight: FontWeight.w500)),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: AppColors.textMid,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
         ],
       ),
     );
@@ -1336,12 +2062,18 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             child: SizedBox(
               width: 20,
               height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accentBlue),
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: AppColors.accentBlue,
+              ),
             ),
           ),
         ),
         const SizedBox(height: 5),
-        const Text(AppMessages.labelProcessing, style: TextStyle(fontSize: 10, color: AppColors.textLight)),
+        const Text(
+          AppMessages.labelProcessing,
+          style: TextStyle(fontSize: 10, color: AppColors.textLight),
+        ),
       ],
     );
   }
