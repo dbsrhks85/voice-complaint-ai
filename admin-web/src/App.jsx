@@ -5,6 +5,9 @@ import './index.css';
 // API
 // ─────────────────────────────────────────
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const ADMIN_API_KEY = import.meta.env.VITE_ADMIN_API_KEY || '';
+const adminHeaders = () =>
+  ADMIN_API_KEY ? { 'X-Admin-Api-Key': ADMIN_API_KEY } : {};
 
 // ─────────────────────────────────────────
 // 민원 카테고리 (사용자 입력 기준)
@@ -159,7 +162,9 @@ function App() {
   const loadReports = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/get-reports`);
+      const res = await fetch(`${API_URL}/get-reports`, {
+        headers: adminHeaders(),
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setReports(Array.isArray(data) ? data : []);
@@ -315,6 +320,7 @@ function App() {
     try {
       const res = await fetch(`${API_URL}/update-status/${id}`, {
         method: 'POST',
+        headers: adminHeaders(),
         body: formData,
       });
       if (res.ok) {

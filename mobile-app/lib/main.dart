@@ -11,6 +11,9 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'dart:io';
 import 'dart:async';
 import 'services/audio_normalizer.dart';
+import 'services/api_client.dart';
+import 'services/auth_service.dart';
+import 'models/app_user.dart';
 import 'constants.dart';
 import 'config.dart'; // ← 서버 주소는 config.dart에서 관리 (git 제외)
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
@@ -109,7 +112,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   // 로그인 상태
   bool _isLoggedIn = false;
-  User? _kakaoUser;
+  bool _isAuthRestoring = true;
+  bool _isLoggingIn = false;
+  AppUser? _currentUser;
   List<Map<String, dynamic>> _myReports = [];
   bool _isLoadingMyReports = false;
   String? _pushToken;
@@ -122,6 +127,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   late final AudioRecorder _audioRecorder;
   late final AudioPlayer _audioPlayer;
+  late final AuthService _authService;
+  late final ApiClient _apiClient;
   bool _initialized = false;
   String? _filePath;
   String? _normalizedFilePath;
@@ -149,6 +156,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _authService = AuthService(serverUrl: _kServerUrl);
+    _apiClient = ApiClient(baseUrl: _kServerUrl, authService: _authService);
 
     // 맥동 애니메이션 (녹음 버튼)
     _pulseController = AnimationController(
@@ -178,6 +187,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     _audioPlayer = AudioPlayer();
     _initialized = true;
     await _initializePushNotifications();
+    await _restoreAuthSession();
     // GPS 자동 취득 제거 — 현장 민원 위치 동의 시점에만 취득
   }
 
@@ -198,29 +208,60 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
   // ── 카카오 로그인 로직 ──────────────────────────────────────
   Future<void> _loginWithKakao() async {
+    if (_isLoggingIn) return;
+    setState(() => _isLoggingIn = true);
     try {
-      bool isInstalled = await isKakaoTalkInstalled();
-
-      if (isInstalled) {
-        await UserApi.instance.loginWithKakaoTalk();
-      } else {
-        await UserApi.instance.loginWithKakaoAccount();
-      }
-
-      User user = await _fetchKakaoUserWithProfileConsent();
+      final session = await _authService.loginWithKakao();
       setState(() {
         _isLoggedIn = true;
-        _kakaoUser = user;
+        _currentUser = session.user;
+        _isLoggingIn = false;
       });
-      _showSnack('${_kakaoNickname(user)}님 환영합니다!');
-      await _registerPushToken(user);
+      _showSnack('${_kakaoNickname(_currentUser)}님 환영합니다!');
+      await _registerPushToken();
 
       // 로그인 후 서버에 유저 정보 등록 (옵션)
       // _registerUserToServer(user);
     } catch (e) {
+      if (mounted) {
+        setState(() => _isLoggingIn = false);
+      }
       debugPrint('카카오 로그인 에러: $e');
-      _showSnack('카카오 로그인에 실패했습니다. ($e)');
+      _showSnack('카카오 로그인에 실패했습니다.');
     }
+  }
+
+  Future<void> _restoreAuthSession() async {
+    try {
+      final session = await _authService.restoreSession();
+      if (!mounted) return;
+      if (session != null) {
+        setState(() {
+          _isLoggedIn = true;
+          _currentUser = session.user;
+          _isAuthRestoring = false;
+        });
+        await _registerPushToken();
+      } else {
+        setState(() => _isAuthRestoring = false);
+      }
+    } catch (e) {
+      debugPrint('로그인 세션 복원 실패: $e');
+      if (mounted) {
+        setState(() => _isAuthRestoring = false);
+      }
+    }
+  }
+
+  Future<void> _logout() async {
+    await _authService.logout();
+    if (!mounted) return;
+    setState(() {
+      _isLoggedIn = false;
+      _currentUser = null;
+      _myReports = [];
+    });
+    _showSnack('로그아웃되었습니다.');
   }
 
   Future<void> _initializePushNotifications() async {
@@ -247,14 +288,14 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
       _pushToken = await messaging.getToken();
       debugPrint('FCM token: $_pushToken');
-      if (_isLoggedIn && _kakaoUser != null) {
-        await _registerPushToken(_kakaoUser);
+      if (_isLoggedIn && _currentUser != null) {
+        await _registerPushToken();
       }
 
       _pushTokenRefreshSub = messaging.onTokenRefresh.listen((token) async {
         _pushToken = token;
-        if (_isLoggedIn && _kakaoUser != null) {
-          await _registerPushToken(_kakaoUser);
+        if (_isLoggedIn && _currentUser != null) {
+          await _registerPushToken();
         }
       });
 
@@ -281,19 +322,14 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     }
   }
 
-  Future<void> _registerPushToken(User? user) async {
-    if (user == null || _pushToken == null || _pushToken!.isEmpty) return;
+  Future<void> _registerPushToken() async {
+    if (!_isLoggedIn || _pushToken == null || _pushToken!.isEmpty) return;
 
     try {
-      final dio = Dio();
-      final formData = FormData.fromMap({
-        'kakao_id': user.id.toString(),
-        'nickname': _kakaoNickname(user),
-        'push_token': _pushToken,
-      });
+      final formData = FormData.fromMap({'push_token': _pushToken});
 
-      await dio.post(
-        '$_kServerUrl/register-push-token',
+      await _apiClient.dio.post(
+        '/me/push-token',
         data: formData,
         options: Options(receiveTimeout: const Duration(seconds: 15)),
       );
@@ -460,54 +496,15 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     );
   }
 
-  String _kakaoNickname(User? user) {
-    final accountNickname = user?.kakaoAccount?.profile?.nickname?.trim();
-    if (accountNickname != null && accountNickname.isNotEmpty) {
-      return accountNickname;
-    }
-
-    final propertyNickname = user?.properties?['nickname']?.trim();
-    if (propertyNickname != null && propertyNickname.isNotEmpty) {
-      return propertyNickname;
-    }
-
-    return '사용자';
-  }
-
-  Future<User> _fetchKakaoUserWithProfileConsent() async {
-    User user = await UserApi.instance.me(
-      properties: ['kakao_account.profile'],
-    );
-
-    final needsNicknameConsent =
-        user.kakaoAccount?.profileNicknameNeedsAgreement == true ||
-        user.kakaoAccount?.profileNeedsAgreement == true;
-
-    if (_kakaoNickname(user) == '사용자' && needsNicknameConsent) {
-      try {
-        await UserApi.instance.loginWithNewScopes(['profile_nickname']);
-        user = await UserApi.instance.me(properties: ['kakao_account.profile']);
-      } catch (e) {
-        debugPrint('카카오 프로필 닉네임 추가 동의 실패: $e');
-      }
-    }
-
-    debugPrint(
-      '카카오 프로필 상태: '
-      'accountNickname=${user.kakaoAccount?.profile?.nickname}, '
-      'propertyNickname=${user.properties?['nickname']}, '
-      'profileNeedsAgreement=${user.kakaoAccount?.profileNeedsAgreement}, '
-      'profileNicknameNeedsAgreement=${user.kakaoAccount?.profileNicknameNeedsAgreement}',
-    );
-
-    return user;
+  String _kakaoNickname(AppUser? user) {
+    final nickname = user?.nickname.trim();
+    return (nickname == null || nickname.isEmpty) ? '사용자' : nickname;
   }
 
   Future<String?> _reverseGeocode(double lat, double lng) async {
     try {
-      final dio = Dio();
-      final response = await dio.get(
-        '$_kServerUrl/reverse-geocode',
+      final response = await _apiClient.dio.get(
+        '/reverse-geocode',
         queryParameters: {'lat': lat, 'lng': lng},
         options: Options(receiveTimeout: const Duration(seconds: 10)),
       );
@@ -580,12 +577,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 
   Future<List<Map<String, dynamic>>> _fetchMyReports() async {
-    final kakaoId = _kakaoUser?.id.toString();
-    if (kakaoId == null || kakaoId.isEmpty) return [];
+    if (!_isLoggedIn) return [];
 
-    final dio = Dio();
-    final response = await dio.get(
-      '$_kServerUrl/get-reports/$kakaoId',
+    final response = await _apiClient.dio.get(
+      '/me/reports',
       options: Options(receiveTimeout: const Duration(seconds: 20)),
     );
 
@@ -600,7 +595,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _openMyReportsSheet() async {
-    if (!_isLoggedIn || _kakaoUser == null) {
+    if (!_isLoggedIn || _currentUser == null) {
       _showSnack('로그인 후 내 민원 현황을 확인할 수 있어요.');
       return;
     }
@@ -874,14 +869,13 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     setState(() => _isSendingSTT = true);
 
     try {
-      final dio = Dio();
       final fileName = filePath.split('/').last;
       final formData = FormData.fromMap({
         'file': await MultipartFile.fromFile(filePath, filename: fileName),
       });
 
-      final response = await dio.post(
-        '$_kServerUrl/stt-only',
+      final response = await _apiClient.dio.post(
+        '/stt-only',
         data: formData,
         options: Options(receiveTimeout: const Duration(seconds: 60)),
       );
@@ -1483,13 +1477,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     setState(() => _isSubmitting = true);
 
     try {
-      final dio = Dio();
-
       // 위치 정보: field+동의 시 드래그 좌표, admin 또는 거절 시 null
       final mapData = <String, dynamic>{
         'stt_text': sttText,
-        'kakao_id': _kakaoUser?.id.toString() ?? 'anonymous',
-        'nickname': _kakaoNickname(_kakaoUser), // 기능2: 닉네임 DB 저장
         if (selectedLat != null) 'lat': selectedLat.toString(),
         if (selectedLng != null) 'lng': selectedLng.toString(),
         if (selectedAddress != null && selectedAddress.isNotEmpty)
@@ -1511,8 +1501,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
       final formData = FormData.fromMap(mapData);
 
-      final response = await dio.post(
-        '$_kServerUrl/submit-complaint',
+      final response = await _apiClient.dio.post(
+        '/submit-complaint',
         data: formData,
         options: Options(receiveTimeout: const Duration(seconds: 30)),
       );
@@ -1644,10 +1634,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                           color: AppColors.accentBlue,
                         ),
                         const SizedBox(height: 16),
-                        const Text(
-                          '서비스 이용을 위해\n로그인이 필요합니다.',
+                        Text(
+                          _isAuthRestoring
+                              ? '로그인 상태를\n확인하고 있습니다.'
+                              : '서비스 이용을 위해\n로그인이 필요합니다.',
                           textAlign: TextAlign.center,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.w700,
                             color: AppColors.textDark,
@@ -1656,7 +1648,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                         ),
                         const SizedBox(height: 32),
                         ElevatedButton(
-                          onPressed: _loginWithKakao,
+                          onPressed: (_isAuthRestoring || _isLoggingIn)
+                              ? null
+                              : _loginWithKakao,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: const Color(0xFFFEE500), // 카카오 노란색
                             foregroundColor: Colors.black87,
@@ -1669,14 +1663,28 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
-                          child: const Row(
+                          child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.chat_bubble_rounded, size: 18),
-                              SizedBox(width: 8),
+                              if (_isLoggingIn || _isAuthRestoring)
+                                const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.black87,
+                                  ),
+                                )
+                              else
+                                const Icon(Icons.chat_bubble_rounded, size: 18),
+                              const SizedBox(width: 8),
                               Text(
-                                '카카오로 3초만에 시작하기',
-                                style: TextStyle(
+                                _isAuthRestoring
+                                    ? '확인 중'
+                                    : _isLoggingIn
+                                    ? '로그인 중'
+                                    : '카카오로 3초만에 시작하기',
+                                style: const TextStyle(
                                   fontWeight: FontWeight.w700,
                                   fontSize: 15,
                                 ),
@@ -1752,6 +1760,16 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             ),
           ),
           const Spacer(),
+          if (_isLoggedIn)
+            IconButton(
+              tooltip: '로그아웃',
+              onPressed: _logout,
+              icon: const Icon(
+                Icons.logout_rounded,
+                color: AppColors.accentBlue,
+                size: 20,
+              ),
+            ),
           // 처리 중 인디케이터 (STT 인식 중 / 민원 접수 중)
           if (_isSendingSTT || _isSubmitting)
             Container(

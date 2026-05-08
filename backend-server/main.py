@@ -28,7 +28,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
@@ -39,6 +39,10 @@ from database import init_supabase, get_supabase
 from stt_engine import transcribe_audio
 from nlp_engine import classify_complaint
 from messages import ApiMessages
+from core.admin_auth import require_admin
+from core.security import get_current_user_payload
+from routers.auth import router as auth_router
+from routers.me import router as me_router
 
 try:
     import firebase_admin
@@ -74,6 +78,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
+app.include_router(me_router)
 
 # 업로드 디렉토리 및 설정
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
@@ -293,7 +300,7 @@ async def health_check():
         return {"status": "running", "db": f"error: {str(e)}"}
 
 @app.get("/get-reports")
-async def get_reports():
+async def get_reports(_: bool = Depends(require_admin)):
     """민원 전체 목록 조회 (작성자 닉네임 포함)"""
     supabase = get_supabase()
     # users 테이블과 join하여 관리자 표시용 민원인 정보를 가져오기
@@ -335,8 +342,14 @@ async def reverse_geocode(lat: float, lng: float):
     return {"success": True, "address": address}
 
 @app.get("/get-reports/{kakao_id}")
-async def get_my_reports(kakao_id: str):
-    """내 민원만 조회"""
+async def get_my_reports(
+    kakao_id: str,
+    current_user: dict = Depends(get_current_user_payload),
+):
+    """내 민원만 조회 (legacy path: token 사용자와 kakao_id가 일치해야 함)"""
+    if current_user.get("kakao_id") != kakao_id:
+        raise HTTPException(status_code=403, detail="다른 사용자의 민원을 조회할 수 없습니다.")
+
     supabase = get_supabase()
     user_res = await supabase.table("users").select("id").eq("kakao_id", kakao_id).execute()
     if not user_res.data: return []
@@ -347,18 +360,19 @@ async def get_my_reports(kakao_id: str):
 
 @app.post("/register-push-token")
 async def register_push_token(
-    kakao_id: str = Form(...),
     push_token: str = Form(...),
     nickname: str = Form(default=None),
+    current_user: dict = Depends(get_current_user_payload),
 ):
     """사용자 기기의 FCM push token 저장"""
     if not push_token.strip():
         raise HTTPException(status_code=400, detail="push_token이 필요합니다.")
 
     supabase = get_supabase()
-    user_id = await get_or_create_user(kakao_id, nickname)
+    user_id = current_user["user_id"]
     result = await supabase.table("users").update({
-        "push_token": push_token.strip()
+        "push_token": push_token.strip(),
+        **({"nickname": normalize_nickname(nickname, current_user.get("kakao_id"))} if normalize_nickname(nickname, current_user.get("kakao_id")) else {}),
     }).eq("id", user_id).execute()
 
     if not result.data:
@@ -369,7 +383,8 @@ async def register_push_token(
 async def update_status(
     report_id: int, 
     status: str = Form(...),
-    rejection_reason: str = Form(None)
+    rejection_reason: str = Form(None),
+    _: bool = Depends(require_admin),
 ):
     """민원 상태 변경 (pending, processing, completed, rejected)"""
     if status not in ["pending", "processing", "completed", "rejected"]:
@@ -398,7 +413,7 @@ async def update_status(
     return {"success": True, "status": status}
 
 @app.post("/resolve-report/{report_id}")
-async def resolve_report(report_id: int):
+async def resolve_report(report_id: int, _: bool = Depends(require_admin)):
     """관리자 웹 호환용: 민원을 처리 완료 상태로 변경"""
     supabase = get_supabase()
     update_data = {
@@ -449,7 +464,8 @@ async def submit_complaint(
     department: str = Form(None),
     complaint_type: str = Form("field"),
     attachment_note: str = Form(None),
-    attachments: list[UploadFile] = File(default=[])
+    attachments: list[UploadFile] = File(default=[]),
+    current_user: dict = Depends(get_current_user_payload),
 ):
     """최종 민원 제출 및 DB 저장"""
     supabase = get_supabase()
@@ -460,8 +476,8 @@ async def submit_complaint(
     if not address and lat is not None and lng is not None:
         address = reverse_geocode_address(lat, lng)
 
-    # 1. 유저 ID 확보
-    user_id = await get_or_create_user(kakao_id, nickname)
+    # 1. 인증된 유저 ID 확보
+    user_id = current_user["user_id"]
 
     # 2. 첨부파일 저장
     saved_urls = []

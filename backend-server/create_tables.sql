@@ -14,6 +14,19 @@ CREATE TABLE IF NOT EXISTS users (
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 사용자 refresh token 저장소
+CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash  VARCHAR(64) UNIQUE NOT NULL,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    expires_at  TIMESTAMPTZ NOT NULL,
+    revoked_at  TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_user ON auth_refresh_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_auth_refresh_tokens_hash ON auth_refresh_tokens(token_hash);
+
 -- 2. departments 테이블 (추가)
 CREATE TABLE IF NOT EXISTS departments (
     id          BIGSERIAL PRIMARY KEY,
