@@ -884,6 +884,43 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   Future<void> _fetchSttOnly({required String filePath}) async {
     setState(() => _isSendingSTT = true);
 
+    // AI 분석 중임을 알리는 오버레이 표시
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => WillPopScope(
+        onWillPop: () async => false,
+        child: Dialog(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const AnalyzingAnimation(),
+              const SizedBox(height: 24),
+              const Text(
+                "AI가 민원 내용을 분석중입니다!",
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                "잠시만 기다려주세요...",
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.7),
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
     try {
       final fileName = filePath.split('/').last;
       final formData = FormData.fromMap({
@@ -897,6 +934,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       );
 
       final result = Map<String, dynamic>.from(response.data as Map);
+      
+      // 로딩 다이얼로그 닫기
+      if (mounted) Navigator.pop(context);
       setState(() => _isSendingSTT = false);
 
       if (!mounted) return;
@@ -920,6 +960,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         _showSnack(result['error']?.toString() ?? AppMessages.sttFetchFailed);
       }
     } catch (e) {
+      if (mounted) Navigator.pop(context);
       setState(() => _isSendingSTT = false);
       _showSnack(AppMessages.sttFetchFailed);
     }
@@ -950,6 +991,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     const double defaultLat = 37.8813; // 춘천시청 기본 좌표
     const double defaultLng = 127.7298;
 
+    // 필드 민원일 경우 즉시 위치 권한 확인 및 지도 표시를 위한 자동 실행
+    bool autoTriggered = false;
+
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -964,13 +1008,45 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             await _determinePosition();
             final initLat = _currentPosition?.latitude ?? defaultLat;
             final initLng = _currentPosition?.longitude ?? defaultLng;
-            final address = await _reverseGeocode(initLat, initLng);
-            setModalState(() {
-              selectedLat = initLat;
-              selectedLng = initLng;
-              selectedAddress = address;
-              isLoadingGps = false;
-            });
+            
+            // 냅다 지도부터 띄우기 (MapPickerPage로 즉시 이동)
+            if (!mounted) return;
+            final result = await Navigator.push<LatLng>(
+              context,
+              MaterialPageRoute(
+                builder: (_) => MapPickerPage(
+                  initialLat: initLat,
+                  initialLng: initLng,
+                ),
+              ),
+            );
+
+            // 지도에서 선택 완료 후 돌아왔을 때
+            if (result != null) {
+              setModalState(() => isLoadingGps = true);
+              final address = await _reverseGeocode(result.latitude, result.longitude);
+              setModalState(() {
+                selectedLat = result.latitude;
+                selectedLng = result.longitude;
+                selectedAddress = address;
+                isLoadingGps = false;
+              });
+            } else {
+              // 취소하고 돌아왔을 때 (기본 GPS 위치로 세팅)
+              final address = await _reverseGeocode(initLat, initLng);
+              setModalState(() {
+                selectedLat = initLat;
+                selectedLng = initLng;
+                selectedAddress = address;
+                isLoadingGps = false;
+              });
+            }
+          }
+
+          // [자동 실행] 필드 민원이고 아직 위치를 가져오지 않았다면 즉시 실행
+          if (currentType == 'field' && !locationConsented && !isLoadingGps && !autoTriggered) {
+            autoTriggered = true;
+            Future.delayed(Duration.zero, () => onConsentYes());
           }
 
           return Container(
@@ -1020,9 +1096,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                         label: const Text('📍 현장 민원'),
                         selected: currentType == 'field',
                         selectedColor: AppColors.accentBlue.withOpacity(0.2),
-                        onSelected: (_) => setModalState(() {
-                          currentType = 'field';
-                        }),
+                        onSelected: (_) {
+                          setModalState(() {
+                            currentType = 'field';
+                          });
+                          if (!locationConsented) onConsentYes();
+                        },
                       ),
                       const SizedBox(width: 12),
                       ChoiceChip(
@@ -1070,254 +1149,136 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
                   // ── 현장 민원 전용: 위치 첨부 섹션
                   if (currentType == 'field') ...[
-                    if (!locationConsented) ...[
-                      Container(
+                    const SizedBox(height: 8),
+                    if (!locationConsented && !isLoadingGps)
+                      SizedBox(
                         width: double.infinity,
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: AppColors.accentBlue.withOpacity(0.07),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: AppColors.accentBlue.withOpacity(0.25),
+                        child: ElevatedButton.icon(
+                          onPressed: onConsentYes,
+                          icon: const Icon(Icons.my_location_rounded, size: 18),
+                          label: const Text("현재 위치 자동 첨부하기"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.accentBlue.withOpacity(0.1),
+                            foregroundColor: AppColors.accentBlue,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
                           ),
                         ),
+                      ),
+                    
+                    if (isLoadingGps)
+                      const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 24),
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              AppMessages.locationConsentTitle,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.textDark,
+                            SizedBox(
+                              width: 24,
+                              height: 24,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 3,
+                                color: AppColors.accentBlue,
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            const Text(
-                              AppMessages.locationConsentSub,
+                            SizedBox(height: 12),
+                            Text(
+                              "정밀한 위치 정보를 확인 중입니다...",
                               style: TextStyle(
-                                fontSize: 12,
+                                fontSize: 13,
                                 color: AppColors.textMid,
+                                fontWeight: FontWeight.w600,
                               ),
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: ElevatedButton(
-                                    onPressed: onConsentYes,
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: AppColors.accentBlue,
-                                      foregroundColor: Colors.white,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 10,
-                                      ),
-                                      elevation: 0,
-                                    ),
-                                    child: const Text(
-                                      AppMessages.locationConsentYes,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: OutlinedButton(
-                                    onPressed: () {},
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: AppColors.textMid,
-                                      side: const BorderSide(
-                                        color: AppColors.cloudDeep,
-                                      ),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 10,
-                                      ),
-                                    ),
-                                    child: const Text(
-                                      AppMessages.locationConsentNo,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
                             ),
                           ],
                         ),
                       ),
-                    ] else ...[
-                      if (isLoadingGps)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 16),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: AppColors.accentBlue,
-                                ),
-                              ),
-                              SizedBox(width: 10),
-                              Text(
-                                AppMessages.locationGpsWaiting,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: AppColors.textMid,
-                                ),
-                              ),
-                            ],
+
+                    if (locationConsented && !isLoadingGps) ...[
+                      // ── 위치 미리보기 지도
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Container(
+                          height: 160,
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            color: AppColors.cloudDeep.withOpacity(0.3),
+                            border: Border.all(color: AppColors.cloudDeep),
                           ),
-                        )
-                      else ...[
-                        // ── 위치 선택 완료 여부에 따라 다른 UI 표시
-                        if (selectedLat == null) ...[
-                          // 지도 열기 버튼
-                          SizedBox(
-                            width: double.infinity,
-                            child: OutlinedButton.icon(
-                              onPressed: () async {
-                                final result = await Navigator.push<LatLng>(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => MapPickerPage(
-                                      initialLat:
-                                          _currentPosition?.latitude ??
-                                          defaultLat,
-                                      initialLng:
-                                          _currentPosition?.longitude ??
-                                          defaultLng,
+                          child: Stack(
+                            children: [
+                              // 미니맵 미리보기 (정적 지도 또는 간단한 UI)
+                              KakaoMap(
+                                onMapCreated: (controller) {
+                                  if (selectedLat != null && selectedLng != null) {
+                                    controller.setCenter(LatLng(selectedLat!, selectedLng!));
+                                  }
+                                },
+                                markers: [
+                                  Marker(
+                                    markerId: 'preview',
+                                    latLng: LatLng(
+                                      selectedLat ?? defaultLat,
+                                      selectedLng ?? defaultLng,
                                     ),
                                   ),
-                                );
-                                if (result != null) {
-                                  if (!_isValidLatLng(
-                                    result.latitude,
-                                    result.longitude,
-                                  )) {
-                                    _showSnack('지도 좌표를 확인하지 못했습니다. 다시 시도해주세요.');
-                                    return;
-                                  }
-                                  setModalState(() {
-                                    isLoadingGps = true;
-                                  });
-                                  final address = await _reverseGeocode(
-                                    result.latitude,
-                                    result.longitude,
-                                  );
-                                  setModalState(() {
-                                    selectedLat = result.latitude;
-                                    selectedLng = result.longitude;
-                                    selectedAddress = address;
-                                    isLoadingGps = false;
-                                  });
-                                }
-                              },
-                              icon: const Icon(Icons.map_outlined, size: 20),
-                              label: const Text(
-                                '지도에서 위치 선택하기',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 14,
+                                ],
+                                center: LatLng(
+                                  selectedLat ?? defaultLat,
+                                  selectedLng ?? defaultLng,
                                 ),
                               ),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: AppColors.accentBlue,
-                                side: const BorderSide(
-                                  color: AppColors.accentBlue,
-                                  width: 1.5,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 14,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ] else ...[
-                          // 위치 선택 완료 표시
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFE05252).withOpacity(0.08),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(
-                                color: const Color(0xFFE05252).withOpacity(0.3),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.location_pin,
-                                  color: Color(0xFFE05252),
-                                  size: 20,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        AppMessages.mapPinConfirmed,
-                                        style: TextStyle(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w700,
-                                          color: Color(0xFFE05252),
-                                        ),
+                              // 오버레이 커버 (터치 방지 및 디자인)
+                              Positioned(
+                                top: 12,
+                                left: 12,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.1),
+                                        blurRadius: 4,
                                       ),
+                                    ],
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.check_circle, color: AppColors.successGreen, size: 14),
+                                      SizedBox(width: 4),
                                       Text(
-                                        selectedAddress ?? '주소를 찾지 못했습니다.',
-                                        style: const TextStyle(
-                                          fontSize: 12,
-                                          color: AppColors.textMid,
-                                          height: 1.35,
+                                        "위치 확인됨",
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                          color: AppColors.textDark,
                                         ),
                                       ),
                                     ],
                                   ),
                                 ),
-                                // 위치 재선택 버튼
-                                TextButton(
+                              ),
+                              // 재선택 버튼
+                              Positioned(
+                                bottom: 12,
+                                right: 12,
+                                child: ElevatedButton(
                                   onPressed: () async {
                                     final result = await Navigator.push<LatLng>(
                                       context,
                                       MaterialPageRoute(
                                         builder: (_) => MapPickerPage(
-                                          initialLat: selectedLat!,
-                                          initialLng: selectedLng!,
+                                          initialLat: selectedLat ?? defaultLat,
+                                          initialLng: selectedLng ?? defaultLng,
                                         ),
                                       ),
                                     );
                                     if (result != null) {
-                                      if (!_isValidLatLng(
-                                        result.latitude,
-                                        result.longitude,
-                                      )) {
-                                        _showSnack(
-                                          '지도 좌표를 확인하지 못했습니다. 다시 시도해주세요.',
-                                        );
-                                        return;
-                                      }
-                                      setModalState(() {
-                                        isLoadingGps = true;
-                                      });
+                                      setModalState(() => isLoadingGps = true);
                                       final address = await _reverseGeocode(
                                         result.latitude,
                                         result.longitude,
@@ -1330,40 +1291,36 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                                       });
                                     }
                                   },
-                                  child: const Text(
-                                    '변경',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: AppColors.accentBlue,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.white,
+                                    foregroundColor: AppColors.accentBlue,
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
                                     ),
                                   ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          // 위치 선택 취소
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton(
-                              onPressed: () => setModalState(() {
-                                locationConsented = false;
-                                selectedLat = null;
-                                selectedLng = null;
-                                selectedAddress = null;
-                              }),
-                              child: const Text(
-                                '위치 선택 취소',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: AppColors.textMid,
+                                  child: const Text("위치 변경", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
                                 ),
                               ),
-                            ),
+                            ],
                           ),
-                        ],
-                      ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Text(
+                          selectedAddress ?? '주소를 찾지 못했습니다.',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textMid,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
                     ],
-                    const SizedBox(height: 8),
                   ],
 
                   // ── 파일 첨부
@@ -2259,6 +2216,85 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
           style: TextStyle(fontSize: 10, color: AppColors.textLight),
         ),
       ],
+    );
+  }
+}
+// ──────────────────────────────────────────────────────────
+// [UI Component] AI 분석 애니메이션
+// ──────────────────────────────────────────────────────────
+class AnalyzingAnimation extends StatefulWidget {
+  const AnalyzingAnimation({super.key});
+
+  @override
+  State<AnalyzingAnimation> createState() => _AnalyzingAnimationState();
+}
+
+class _AnalyzingAnimationState extends State<AnalyzingAnimation>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            // 바깥쪽 파동
+            ...List.generate(3, (index) {
+              final progress = (_controller.value + index / 3) % 1.0;
+              return Container(
+                width: 120 * progress,
+                height: 120 * progress,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: AppColors.accentLight.withOpacity(1.0 - progress),
+                    width: 2,
+                  ),
+                ),
+              );
+            }),
+            // 중앙 아이콘
+            Container(
+              width: 60,
+              height: 60,
+              decoration: const BoxDecoration(
+                color: AppColors.accentBlue,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.accentBlue,
+                    blurRadius: 20,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: const Icon(
+                Icons.auto_awesome,
+                color: Colors.white,
+                size: 32,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }

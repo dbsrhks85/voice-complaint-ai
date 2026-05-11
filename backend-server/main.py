@@ -605,12 +605,13 @@ async def submit_complaint(
             # 프론트엔드에서 쉽게 접근할 수 있도록 파일명(또는 상대경로)만 저장
             saved_urls.append(unique_name)
 
-    # 3. 데이터 보완 (NLP)
-    if not (title and category and department):
-        nlp = await classify_complaint(stt_text)
-        title = title or nlp.get("title", "제목 없음")
-        category = category or nlp.get("category", "기타")
-        department = department or nlp.get("department", "해당 없음")
+    # 3. 데이터 보완 (NLP) - 사용자가 수정한 최종 텍스트를 기반으로 다시 분류
+    # 프론트엔드에서 수정한 내용이 반영되도록 항상 새로 분류하거나, 
+    # 혹은 필수 필드가 비어있을 때 수행합니다.
+    nlp = await classify_complaint(stt_text)
+    title = title or nlp.get("title", "제목 없음")
+    category = category or nlp.get("category", "기타")
+    department = department or nlp.get("department", "해당 없음")
 
     # 4. DB Insert 객체 생성
     complaint_data = {
@@ -718,3 +719,60 @@ async def download_attachments(report_id: int, _: bool = Depends(require_admin))
     except Exception as e:
         print(f"Download Error for Report ID {report_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"첨부파일 압축 생성 중 오류가 발생했습니다: {str(e)}")
+
+
+@app.get("/admin/stats")
+async def get_stats(_: bool = Depends(require_admin)):
+    """대시보드용 통계 데이터 (오늘의 추이, 부서별 비중)"""
+    supabase = get_supabase()
+    
+    # 1. 전체 민원 (통계용)
+    result = await supabase.table("complaints").select("id, department, created_at, status").execute()
+    reports = result.data
+
+    # 2. 오늘 접수된 민원 추이 (시간별)
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    hourly_counts = {i: 0 for i in range(24)}
+    for r in reports:
+        created_at = datetime.fromisoformat(r["created_at"].replace("Z", "+00:00"))
+        if created_at >= today_start:
+            hour = created_at.hour
+            hourly_counts[hour] += 1
+            
+    today_trend = [{"hour": f"{h}시", "count": hourly_counts[h]} for h in range(24)]
+
+    # 3. 부서별 민원 비중
+    dept_counts = {}
+    for r in reports:
+        dept = r.get("department") or "civil"
+        dept_counts[dept] = dept_counts.get(dept, 0) + 1
+        
+    dept_res = await supabase.table("departments").select("key, label").execute()
+    dept_map = {d["key"]: d["label"] for d in dept_res.data}
+    dept_map["civil"] = "민원실 (기본)"
+
+    dept_distribution = [
+        {"name": dept_map.get(k, k), "value": v} 
+        for k, v in dept_counts.items()
+    ]
+
+    # 4. 상태별 요약
+    status_counts = {"pending": 0, "processing": 0, "completed": 0, "rejected": 0}
+    for r in reports:
+        st = r.get("status", "pending")
+        if st in status_counts:
+            status_counts[st] += 1
+
+    return {
+        "success": True,
+        "today_trend": today_trend,
+        "dept_distribution": dept_distribution,
+        "summary": status_counts
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -1,4 +1,8 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { 
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+  PieChart, Pie, Cell, Legend 
+} from 'recharts';
 import './index.css';
 
 // ─────────────────────────────────────────
@@ -127,7 +131,9 @@ function App() {
   const [rejectingReportId, setRejectingReportId] = useState(null);
   const [rejectionReason, setRejectionReason] = useState('접수 내용이 부족합니다');
   const [customReason, setCustomReason] = useState('');
-  const [activeView, setActiveView] = useState('dashboard'); // 'dashboard' | 'departments'
+  const [activeView, setActiveView] = useState('dashboard'); // 'dashboard' | 'departments' | 'stats'
+  const [stats, setStats] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(false);
   const [newDept, setNewDept] = useState({
     key: '',
     label: '',
@@ -299,6 +305,28 @@ function App() {
       setLoading(false);
     }
   }, [accessToken, adminFetch]);
+
+  // 통계 데이터 로드
+  const loadStats = useCallback(async () => {
+    if (!accessToken) return;
+    setStatsLoading(true);
+    try {
+      const res = await adminFetch('/admin/stats');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setStats(data);
+    } catch (e) {
+      console.error('통계 로드 실패:', e);
+    } finally {
+      setStatsLoading(false);
+    }
+  }, [accessToken, adminFetch]);
+
+  useEffect(() => {
+    if (activeView === 'stats') {
+      loadStats();
+    }
+  }, [activeView, loadStats]);
 
   // 지도 init
   useEffect(() => {
@@ -660,13 +688,16 @@ function App() {
             >
               🏢 부서 관리
             </button>
+            <button 
+              className={`nav-item ${activeView === 'stats' ? 'active' : ''}`}
+              onClick={() => setActiveView('stats')}
+            >
+              📈 통계 분석
+            </button>
           </nav>
         </div>
 
         <div className="header-stats">
-          <div className="stat-chip total">
-            {admin.name || admin.username}
-          </div>
           <div className="stat-chip total">
             전체 {reports.length}
           </div>
@@ -683,6 +714,95 @@ function App() {
 
       {/* 본문 */}
       <div className="main-container">
+        {/* 통계 뷰 */}
+        {activeView === 'stats' && (
+          <div className="stats-view">
+            <div className="stats-header">
+              <h2>📊 민원 통계 분석</h2>
+              <p>실시간으로 집계된 민원 접수 및 처리 현황입니다.</p>
+            </div>
+
+            {statsLoading ? (
+              <div className="stats-loading">데이터를 불러오는 중...</div>
+            ) : stats ? (
+              <>
+                <div className="stats-summary-grid">
+                  <div className="summary-card">
+                    <span className="label">대기 중</span>
+                    <span className="value pending">{stats.summary.pending}</span>
+                  </div>
+                  <div className="summary-card">
+                    <span className="label">처리 중</span>
+                    <span className="value processing">{stats.summary.processing}</span>
+                  </div>
+                  <div className="summary-card">
+                    <span className="label">완료됨</span>
+                    <span className="value completed">{stats.summary.completed}</span>
+                  </div>
+                  <div className="summary-card">
+                    <span className="label">반려됨</span>
+                    <span className="value rejected">{stats.summary.rejected}</span>
+                  </div>
+                </div>
+
+                <div className="charts-grid">
+                  <div className="chart-container">
+                    <h3>오늘의 민원 접수 추이</h3>
+                    <div style={{ width: '100%', height: 300 }}>
+                      <ResponsiveContainer>
+                        <AreaChart data={stats.today_trend}>
+                          <defs>
+                            <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#3a6ea5" stopOpacity={0.3}/>
+                              <stop offset="95%" stopColor="#3a6ea5" stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                          <XAxis dataKey="hour" axisLine={false} tickLine={false} tick={{fontSize: 12, fill: '#64748b'}} />
+                          <YAxis axisLine={false} tickLine={false} tick={{fontSize: 12, fill: '#64748b'}} />
+                          <Tooltip 
+                            contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}}
+                          />
+                          <Area type="monotone" dataKey="count" stroke="#3a6ea5" strokeWidth={3} fillOpacity={1} fill="url(#colorCount)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="chart-container">
+                    <h3>부서별 민원 비중</h3>
+                    <div style={{ width: '100%', height: 300 }}>
+                      <ResponsiveContainer>
+                        <PieChart>
+                          <Pie
+                            data={stats.dept_distribution}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={60}
+                            outerRadius={100}
+                            paddingAngle={5}
+                            dataKey="value"
+                          >
+                            {stats.dept_distribution.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#6366f1', '#64748b'][index % 7]} />
+                            ))}
+                          </Pie>
+                          <Tooltip 
+                            contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}}
+                          />
+                          <Legend verticalAlign="bottom" height={36}/>
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="stats-error">통계 데이터를 불러올 수 없습니다.</div>
+            )}
+          </div>
+        )}
+
         {/* 대시보드 뷰 */}
         <div className={`dashboard-view-wrapper ${activeView === 'dashboard' ? '' : 'hidden'}`}>
           {/* 지도 */}
