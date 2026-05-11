@@ -16,9 +16,9 @@ class AppMessages {
 
   // ── 녹음 상태 메시지 (스낵바) ───────────────────────────
   static const String recordingAutoStop    = '말씀이 끝나서 자동으로 접수를 준비합니다.';
-  static const String recordingManualStop  = '녹음이 완료되었습니다. 정규화 중...';
-  static const String normalizeSuccess     = '음성 정규화 완료! 인식 결과를 확인합니다...';
-  static const String normalizeFailed      = '정규화 실패 — 원본 파일로 STT 진행합니다.';
+  static const String recordingManualStop  = '녹음이 완료되었습니다. 인식을 준비합니다...';
+  static const String normalizeSuccess     = '음성 파일 준비 완료! 인식 결과를 확인합니다...';
+  static const String normalizeFailed      = '음성 파일 준비에 실패했습니다. 원본 파일로 STT를 진행합니다.';
 
   // ── 캐릭터 상태 메시지 (화면 중앙) ─────────────────────
   static const String idleGuide            = '버튼을 눌러 민원을 말씀해 주세요';
@@ -31,14 +31,14 @@ class AppMessages {
   static const String hintTapToRecord     = '탭하여 민원 접수 시작';
   static const String hintTapToStop       = '탭하여 녹음 종료';
   static const String labelOriginal       = '원본';
-  static const String labelNormalized     = '정규화';
+  static const String labelNormalized     = '전송본';
   static const String labelProcessing     = '처리 중';
 
   // ── STT 결과 다이얼로그 ─────────────────────────────────
   static const String dialogTitle         = 'STT 결과';
   static const String dialogConfirm       = '확인';
-  static const String dialogNormalizedFile = '📂 정규화 파일';
-  static const String dialogOriginalFile  = '📂 원본 파일 (정규화 실패)';
+  static const String dialogNormalizedFile = '📂 서버 전송 파일';
+  static const String dialogOriginalFile  = '📂 원본 파일';
   static const String dialogSavedPath     = '💾 JSON 저장 경로';
 
   // ── 헤더 UI ─────────────────────────────────────────────

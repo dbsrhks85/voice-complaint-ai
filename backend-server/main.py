@@ -6,7 +6,7 @@
 #     source venv/bin/activate
 #
 # 2️⃣  서버 실행
-#     python -m uvicorn main:app --reload
+#     python -m uvicorn main:app --host 0.0.0.0 --reload
 #
 # 3️⃣  서버 종료
 #     Ctrl + C
@@ -518,25 +518,50 @@ async def resolve_report(report_id: int, _: bool = Depends(require_admin)):
 
 @app.post("/stt-only")
 async def stt_only(file: UploadFile = File(...)):
-    """음성 전송 시 STT 결과와 NLP 분류 제안 반환"""
+    """음성 전송 시 STT 텍스트 + GPT 분류 결과 반환"""
     content = await file.read()
-    ext = os.path.splitext(file.filename or "")[-1].lower() or ".m4a"
-    file_path = os.path.join(UPLOAD_DIR, f"tmp_{uuid.uuid4().hex}{ext}")
+    ext = os.path.splitext(file.filename or "")[-1].lower() or ".wav"
+
+    # DEBUG_KEEP_AUDIO=true 이면 타임스탬프 파일명으로 보관 (오디오 품질 검사용)
+    debug_keep = os.getenv("DEBUG_KEEP_AUDIO", "false").strip().lower() == "true"
+    ts = datetime.now().strftime("%H%M%S")
+    prefix = f"debug_{ts}" if debug_keep else f"tmp_{uuid.uuid4().hex}"
+    file_path = os.path.join(UPLOAD_DIR, f"{prefix}_original{ext}")
 
     with open(file_path, "wb") as f:
         f.write(content)
 
+    file_size = len(content)
+    print(f"[stt-only] received: {file_path} ({file_size} bytes, debug_keep={debug_keep})")
+
     stt_result = await transcribe_audio(file_path)
-    if os.path.exists(file_path): os.remove(file_path)
+
+    if not debug_keep and os.path.exists(file_path):
+        os.remove(file_path)
 
     if not stt_result["success"]:
         raise HTTPException(status_code=500, detail=ApiMessages.STT_FAILED)
 
-    nlp_suggestion = await classify_complaint(stt_result["text"])
+    # STT 성공 후 GPT 분류 실행 (실패해도 STT 결과는 정상 반환)
+    nlp = None
+    try:
+        nlp_result = await classify_complaint(stt_result["text"])
+        if nlp_result.get("success"):
+            nlp = {
+                "title": nlp_result.get("title"),
+                "complaint_type": nlp_result.get("complaint_type", "field"),
+                "category": nlp_result.get("category"),
+                "department": nlp_result.get("department"),
+                "confidence": nlp_result.get("confidence", 0.0),
+            }
+            print(f"[stt-only] GPT 분류 완료: type={nlp['complaint_type']}, confidence={nlp['confidence']:.2f}")
+    except Exception as e:
+        print(f"[stt-only] GPT 분류 실패 (STT는 정상 반환): {e}")
+
     return {
         "success": True,
         "stt_text": stt_result["text"],
-        "nlp_suggestion": nlp_suggestion
+        "nlp": nlp
     }
 
 @app.post("/submit-complaint")

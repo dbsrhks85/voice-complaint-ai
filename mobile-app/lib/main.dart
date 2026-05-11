@@ -406,13 +406,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     if (await _audioRecorder.hasPermission()) {
       final directory = await getApplicationDocumentsDirectory();
       final path =
-          '${directory.path}/report_${DateTime.now().millisecondsSinceEpoch}.m4a';
+          '${directory.path}/report_${DateTime.now().millisecondsSinceEpoch}.wav';
 
       const config = RecordConfig(
-        encoder: AudioEncoder.aacLc,
-        sampleRate: 44100,
+        encoder: AudioEncoder.wav,
+        sampleRate: 16000,
         numChannels: 1,
-        bitRate: 32000,
       );
 
       await _audioPlayer.stop();
@@ -904,14 +903,18 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
       if (result['success'] == true) {
         final sttText = result['stt_text'] as String? ?? '';
-        final nlpSuggestion = result['nlp_suggestion'] as Map<String, dynamic>?;
         if (sttText.isEmpty) {
           _showSnack(AppMessages.sttFetchFailed);
           return;
         }
+        // GPT 분류 결과 파싱 (없으면 기본값 사용)
+        final nlp = result['nlp'] as Map<String, dynamic>?;
         _showSttConfirmBottomSheet(
           sttText: sttText,
-          nlpSuggestion: nlpSuggestion,
+          suggestedType: nlp?['complaint_type'] as String? ?? 'field',
+          nlpTitle: nlp?['title'] as String?,
+          nlpCategory: nlp?['category'] as String?,
+          nlpDepartment: nlp?['department'] as String?,
         );
       } else {
         _showSnack(result['error']?.toString() ?? AppMessages.sttFetchFailed);
@@ -927,9 +930,12 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   // ──────────────────────────────────────────────────────────
   void _showSttConfirmBottomSheet({
     required String sttText,
-    Map<String, dynamic>? nlpSuggestion,
+    String suggestedType = 'field', // GPT 제안 민원 유형
+    String? nlpTitle,               // GPT 제안 제목
+    String? nlpCategory,            // GPT 제안 카테고리
+    String? nlpDepartment,          // GPT 제안 담당부서
   }) {
-    String currentType = nlpSuggestion?['complaint_type'] ?? 'field';
+    String currentType = suggestedType; // GPT 제안값으로 토글 초기화
     List<File> attachedFiles = [];
     final TextEditingController textController = TextEditingController(
       text: sttText,
@@ -1416,9 +1422,6 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                         _submitComplaintWithText(
                           sttText: textController.text,
                           complaintType: currentType,
-                          category: nlpSuggestion?['category'],
-                          department: nlpSuggestion?['department'],
-                          title: nlpSuggestion?['title'],
                           attachedFiles: attachedFiles,
                           selectedLat:
                               (currentType == 'field' &&
@@ -1438,6 +1441,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                                   hasValidLocation)
                               ? selectedAddress
                               : null,
+                          nlpTitle: nlpTitle,
+                          nlpCategory: nlpCategory,
+                          nlpDepartment: nlpDepartment,
                         );
                       },
                       icon: const Icon(Icons.check_circle_outline, size: 20),
@@ -1504,18 +1510,18 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 
   // ──────────────────────────────────────────────────────────
-  // [Step 3]  /submit-complaint  →  NLP 분류 + DB 저장
+  // [Step 3]  /submit-complaint  →  최종 확인 텍스트를 GPT 분석 + DB 저장
   // ──────────────────────────────────────────────────────────
   Future<void> _submitComplaintWithText({
     required String sttText,
     String? complaintType,
-    String? category,
-    String? department,
-    String? title,
     List<File> attachedFiles = const [],
-    double? selectedLat, // 사용자가 지도 핀으로 선택한 위도 (field+동의 시)
-    double? selectedLng, // 사용자가 지도 핀으로 선택한 경도 (field+동의 시)
+    double? selectedLat,     // 사용자가 지도 핀으로 선택한 위도 (field+동의 시)
+    double? selectedLng,     // 사용자가 지도 핀으로 선택한 경도 (field+동의 시)
     String? selectedAddress,
+    String? nlpTitle,        // GPT 분류 제안 제목 (서버 GPT 재실행 방지)
+    String? nlpCategory,     // GPT 분류 제안 카테고리
+    String? nlpDepartment,   // GPT 분류 제안 담당부서
   }) async {
     setState(() => _isSubmitting = true);
 
@@ -1531,9 +1537,10 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             selectedAddress.isNotEmpty)
           'address': selectedAddress,
         if (complaintType != null) 'complaint_type': complaintType,
-        if (category != null) 'category': category,
-        if (department != null) 'department': department,
-        if (title != null) 'title': title,
+        // GPT 분류 결과 전달 → 서버에서 GPT 재실행 불필요
+        if (nlpTitle != null) 'title': nlpTitle,
+        if (nlpCategory != null) 'category': nlpCategory,
+        if (nlpDepartment != null) 'department': nlpDepartment,
       };
 
       if (attachedFiles.isNotEmpty) {
@@ -2115,7 +2122,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
                     : (_normalizedFilePath != null
                           ? _buildPlayButton(
                               onTap: _playNormalizedRecording,
-                              label: '정규화',
+                              label: AppMessages.labelNormalized,
                               icon: Icons.tune_outlined,
                               color: AppColors.accentBlue,
                               size: 52,

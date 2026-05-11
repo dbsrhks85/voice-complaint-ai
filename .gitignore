@@ -6,6 +6,9 @@ firebase-service-account*.json
 backend-server/firebase-service-account*.json
 mobile-app/android/app/google-services.json
 config.py
+*.jks
+*.keystore
+key.properties
 
 # ===== Python =====
 __pycache__/
@@ -35,3 +38,6 @@ backend-server/test_results/*
 
 # ===== Flutter 서버 주소 설정 (개인별 환경 다름) =====
 mobile-app/lib/config.dart
+
+# ===== release 서명 키(파일) =====
+mobile-app/android/app/capstone-release-key.jks
