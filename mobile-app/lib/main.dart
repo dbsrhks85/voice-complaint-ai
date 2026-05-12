@@ -19,9 +19,12 @@ import 'config.dart'; // ← 서버 주소는 config.dart에서 관리 (git 제�
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:kakao_map_plugin/kakao_map_plugin.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'map_picker_page.dart';
+import 'onboarding_screen.dart';
 
 bool _firebaseReady = false;
+bool _onboardingDone = false;
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
@@ -60,6 +63,13 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   try {
+    final prefs = await SharedPreferences.getInstance();
+    _onboardingDone = prefs.getBool('onboarding_complete') ?? false;
+  } catch (e) {
+    debugPrint('SharedPreferences 초기화 실패: $e');
+  }
+
+  try {
     await Firebase.initializeApp();
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
     _firebaseReady = true;
@@ -95,7 +105,7 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       debugShowCheckedModeBanner: false,
-      home: const MainScreen(),
+      home: _onboardingDone ? const MainScreen() : const OnboardingScreen(),
     );
   }
 }
