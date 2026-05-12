@@ -20,40 +20,25 @@ const adminHeaders = (accessToken) => ({
 // ─────────────────────────────────────────
 // 민원 카테고리 (사용자 입력 기준)
 // ─────────────────────────────────────────
-const CATEGORY_MAP = {
-  repair: {
-    label: '파손/수리',
-    color: '#ef4444',
-    bg: 'rgba(239,68,68,.14)',
-    icon: '🔧',
-  },
-  inquiry: {
-    label: '문의사항',
+// ─────────────────────────────────────────
+// 민원 유형 (현장 / 비현장)
+// ─────────────────────────────────────────
+const TYPE_MAP = {
+  field: {
+    label: '현장 민원',
     color: '#3b82f6',
     bg: 'rgba(59,130,246,.14)',
-    icon: '❓',
+    icon: '📍',
   },
-  suggestion: {
-    label: '건의사항',
-    color: '#f59e0b',
-    bg: 'rgba(245,158,11,.14)',
-    icon: '💡',
-  },
-  permission: {
-    label: '허가/신고',
+  admin: {
+    label: '비현장/행정',
     color: '#8b5cf6',
     bg: 'rgba(139,92,246,.14)',
-    icon: '📋',
-  },
-  unclassified: {
-    label: '미분류',
-    color: '#64748b',
-    bg: 'rgba(100,116,139,.14)',
-    icon: '🔍',
+    icon: '🏢',
   },
 };
 
-const getCat = (key) => CATEGORY_MAP[key] ?? CATEGORY_MAP.unclassified;
+const getType = (type) => TYPE_MAP[type] ?? TYPE_MAP.field;
 
 
 // ─────────────────────────────────────────
@@ -126,6 +111,7 @@ function App() {
   const [departments, setDepartments] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('all');
+  const [typeFilter, setTypeFilter] = useState('all'); // 'all' | 'field' | 'admin'
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(false);
   const [selectedReport, setSelectedReport] = useState(null);
@@ -416,16 +402,20 @@ function App() {
       const matchDept =
         departmentFilter === 'all' || r.deptKey === departmentFilter;
 
-      // 3. 검색 필터
+      // 3. 유형 필터 (현장 / 비현장)
+      const matchType = 
+        typeFilter === 'all' || r.complaint_type === typeFilter;
+
+      // 4. 검색 필터
       const q = searchQuery.toLowerCase();
       const matchSearch =
         !q ||
         r.title?.toLowerCase().includes(q) ||
         r.address?.toLowerCase().includes(q);
 
-      return matchDept && matchSearch;
+      return matchDept && matchType && matchSearch;
     });
-  }, [processedReports, statusFilter, departmentFilter, searchQuery]);
+  }, [processedReports, statusFilter, departmentFilter, typeFilter, searchQuery]);
 
   // 지도 마커
   useEffect(() => {
@@ -708,19 +698,19 @@ function App() {
               className={`nav-item ${activeView === 'dashboard' ? 'active' : ''}`}
               onClick={() => setActiveView('dashboard')}
             >
-              📊 민원 현황
+              민원 현황
             </button>
             <button 
               className={`nav-item ${activeView === 'departments' ? 'active' : ''}`}
               onClick={() => setActiveView('departments')}
             >
-              🏢 부서 관리
+              부서 관리
             </button>
             <button 
               className={`nav-item ${activeView === 'stats' ? 'active' : ''}`}
               onClick={() => setActiveView('stats')}
             >
-              📈 통계 분석
+              통계 분석
             </button>
           </nav>
         </div>
@@ -746,7 +736,7 @@ function App() {
         {activeView === 'stats' && (
           <div className="stats-view">
             <div className="stats-header">
-              <h2>📊 민원 통계 분석</h2>
+              <h2>민원 통계 분석</h2>
               <p>실시간으로 집계된 민원 접수 및 처리 현황입니다.</p>
             </div>
 
@@ -888,6 +878,28 @@ function App() {
                 </div>
               </div>
 
+              {/* 유형 필터 */}
+              <div className="sidebar-filters type-filters">
+                <button
+                  className={`filter-chip ${typeFilter === 'all' ? 'active' : ''}`}
+                  onClick={() => setTypeFilter('all')}
+                >
+                  전체 유형
+                </button>
+                <button
+                  className={`filter-chip ${typeFilter === 'field' ? 'active' : ''}`}
+                  onClick={() => setTypeFilter('field')}
+                >
+                  현장 민원
+                </button>
+                <button
+                  className={`filter-chip ${typeFilter === 'admin' ? 'active' : ''}`}
+                  onClick={() => setTypeFilter('admin')}
+                >
+                  비현장/행정
+                </button>
+              </div>
+
               {/* 부서 필터 */}
               <div className="sidebar-filters">
                 <button
@@ -916,7 +928,7 @@ function App() {
               {/* 목록 */}
               <div className="report-list">
                 {filteredReports.map((report) => {
-                  const cat = getCat(report.category);
+                  const type = getType(report.complaint_type);
 
                   return (
                     <div
@@ -929,11 +941,11 @@ function App() {
                         <span
                           className="category-tag"
                           style={{
-                            background: cat.bg,
-                            color: cat.color,
+                            background: type.bg,
+                            color: type.color,
                           }}
                         >
-                          {cat.label}
+                          {type.label}
                         </span>
 
                         <span className="card-time">
@@ -1065,10 +1077,10 @@ function App() {
                             />
                           )}
 
-                          <div className="rejection-btns">
-                            <button className="rej-cancel" onClick={() => setRejectingReportId(null)}>취소</button>
+                          <div className="rejection-actions">
+                            <button className="rejection-cancel-btn" onClick={() => setRejectingReportId(null)}>취소</button>
                             <button 
-                              className="rej-confirm" 
+                              className="rejection-confirm-btn" 
                               onClick={() => updateStatus(report.id, 'rejected', rejectionReason === '기타' ? customReason : rejectionReason)}
                             >
                               반려 확정
@@ -1093,14 +1105,14 @@ function App() {
         {activeView === 'departments' && (
           <div className="dept-manager-view">
             <div className="dept-manager-header">
-              <h2 className="view-title">🏢 부서 및 AI 분류 관리</h2>
+              <h2 className="view-title">부서 및 AI 분류 관리</h2>
               <p className="view-subtitle">새로운 부서를 추가하면 AI가 자동으로 민원을 해당 부서로 분류하기 시작합니다.</p>
             </div>
 
             <div className="dept-manager-content">
               {/* 추가 폼 */}
               <div className="dept-form-card">
-                <h3 className="card-inner-title">➕ 새 부서 추가</h3>
+                <h3 className="card-inner-title">새 부서 추가</h3>
                 <form className="dept-form" onSubmit={handleAddDepartment}>
                   <div className="form-row">
                     <label>
@@ -1157,7 +1169,7 @@ function App() {
 
               {/* 리스트 */}
               <div className="dept-list-card">
-                <h3 className="card-inner-title">📋 현재 운영 부서 목록</h3>
+                <h3 className="card-inner-title">현재 운영 부서 목록</h3>
                 <div className="dept-table-wrap" style={{ maxHeight: '450px', overflowY: 'auto' }}>
                   <table className="dept-table">
                     <thead>
@@ -1207,7 +1219,7 @@ function App() {
             <div className="modal-header">
               <div className="modal-title-area">
                 <span className="modal-category">
-                  {getCat(selectedReport.category).label}
+                  {getType(selectedReport.complaint_type).label}
                 </span>
                 <h2 className="modal-title">{selectedReport.title}</h2>
               </div>
