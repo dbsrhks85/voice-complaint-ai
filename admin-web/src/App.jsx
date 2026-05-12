@@ -124,6 +124,7 @@ function App() {
   const [newDept, setNewDept] = useState({
     key: '',
     label: '',
+    phone: '',
     color: '#3b82f6',
     keywords: '',
     tasks: ''
@@ -132,6 +133,15 @@ function App() {
   const [deletingDept, setDeletingDept] = useState(null);
   const [reassignKey, setReassignKey] = useState('');
   const [affectedReports, setAffectedReports] = useState([]);
+  const [highlightedReportId, setHighlightedReportId] = useState(null);
+
+  const resetFilters = () => {
+    setStatusFilter('pending');
+    setDepartmentFilter('all');
+    setTypeFilter('all');
+    setSearchQuery('');
+    setHighlightedReportId(null);
+  };
 
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -320,12 +330,17 @@ function App() {
     if (!authChecked || !accessToken || !admin || !kakao?.maps) return;
 
     kakao.maps.load(() => {
-      if (!mapInstanceRef.current && mapRef.current) {
-        mapInstanceRef.current = new kakao.maps.Map(mapRef.current, {
-          center: new kakao.maps.LatLng(37.8813, 127.7298),
-          level: 7,
-        });
-      }
+        if (!mapInstanceRef.current && mapRef.current) {
+          mapInstanceRef.current = new kakao.maps.Map(mapRef.current, {
+            center: new kakao.maps.LatLng(37.8813, 127.7298),
+            level: 7,
+          });
+
+          // 지도 클릭 시 선택 해제
+          kakao.maps.event.addListener(mapInstanceRef.current, 'click', () => {
+            setHighlightedReportId(null);
+          });
+        }
 
       loadDepartments();
       loadReports();
@@ -381,7 +396,7 @@ function App() {
     const counts = {};
 
     processedReports
-      .filter((r) => r.status === 'pending')
+      .filter((r) => r.status === statusFilter)
       .forEach((r) => {
         counts[r.deptKey] = (counts[r.deptKey] || 0) + 1;
       });
@@ -390,7 +405,7 @@ function App() {
       ...d,
       count: counts[d.key] || 0,
     }));
-  }, [processedReports, departments]);
+  }, [processedReports, departments, statusFilter]);
 
   // 필터링된 민원 목록
   const filteredReports = useMemo(() => {
@@ -437,47 +452,45 @@ function App() {
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
 
       const pos = new kakao.maps.LatLng(lat, lng);
+      
+      // 마커 이미지 설정 (선택된 마커는 다른 이미지)
+      const isHighlighted = report.id === highlightedReportId;
+      let markerImage = null;
+      if (isHighlighted) {
+        const imageSrc = "https://t1.daumcdn.net/localimg/localimages/07/mapapidoc/markerStar.png"; 
+        const imageSize = new kakao.maps.Size(24, 35); 
+        markerImage = new kakao.maps.MarkerImage(imageSrc, imageSize);
+      }
 
       const marker = new kakao.maps.Marker({
         position: pos,
+        image: markerImage,
+        zIndex: isHighlighted ? 100 : 1
       });
 
       marker.setMap(map);
 
-      const info = new kakao.maps.InfoWindow({
-        content: `
-          <div style="padding:12px 14px;min-width:230px;">
-            <div style="font-weight:700;margin-bottom:6px;">
-              ${report.title ?? ''}
-            </div>
-
-            <div style="font-size:12px;color:#475569;margin-bottom:8px;">
-              📍 ${report.address ?? ''}
-            </div>
-
-            <div style="
-              background:#f1f5f9;
-              padding:8px;
-              border-radius:10px;
-              font-size:12px;
-            ">
-              담당부서: ${report.dept.label}
-            </div>
-          </div>
-        `,
+      // 마커 클릭 시: 해당 민원의 상태/유형/부서 필터 자동 조정 및 리스트 스크롤
+      kakao.maps.event.addListener(marker, 'click', () => {
+        setHighlightedReportId(report.id);
+        
+        // 1. 필터 자동 조정
+        setStatusFilter(report.status);
+        setTypeFilter(report.complaint_type);
+        setDepartmentFilter(report.deptKey);
+        
+        // 2. 리스트 스크롤 (필터 적용 후 렌더링 시간을 고려해 약간의 지연 후 실행)
+        setTimeout(() => {
+          const el = document.getElementById(`report-${report.id}`);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 100);
       });
-
-      kakao.maps.event.addListener(marker, 'mouseover', () =>
-        info.open(map, marker)
-      );
-
-      kakao.maps.event.addListener(marker, 'mouseout', () =>
-        info.close()
-      );
 
       markersRef.current[report.id] = { marker, pos };
     });
-  }, [filteredReports, kakao]);
+  }, [filteredReports, kakao, highlightedReportId]);
 
 
 
@@ -556,7 +569,7 @@ function App() {
       
       if (res.ok) {
         await loadDepartments();
-        setNewDept({ key: '', label: '', color: '#3b82f6', keywords: '', tasks: '' });
+        setNewDept({ key: '', label: '', phone: '', color: '#3b82f6', keywords: '', tasks: '' });
         window.alert('부서가 추가되었습니다.');
       } else {
         const err = await res.json();
@@ -933,8 +946,12 @@ function App() {
                   return (
                     <div
                       key={report.id}
-                      className="report-item"
-                      onClick={() => moveToMarker(report.id)}
+                      id={`report-${report.id}`}
+                      className={`report-item ${highlightedReportId === report.id ? 'highlighted' : ''}`}
+                      onClick={() => {
+                        setHighlightedReportId(report.id);
+                        moveToMarker(report.id);
+                      }}
                     >
                       {/* 상단 */}
                       <div className="card-top">
@@ -973,6 +990,7 @@ function App() {
 
                         <span className="dept-name">
                           {report.dept.label}
+                          {report.dept.phone && <span className="dept-phone-small"> ({report.dept.phone})</span>}
                         </span>
                       </div>
 
@@ -1134,6 +1152,14 @@ function App() {
                   </div>
                   <div className="form-row">
                     <label>
+                      <span>대표 전화번호</span>
+                      <input 
+                        placeholder="예: 02-123-4567" 
+                        value={newDept.phone}
+                        onChange={e => setNewDept({...newDept, phone: e.target.value})}
+                      />
+                    </label>
+                    <label>
                       <span>테마 색상</span>
                       <div className="color-input-group">
                         <input 
@@ -1176,6 +1202,7 @@ function App() {
                       <tr>
                         <th>부서명</th>
                         <th>코드</th>
+                        <th>전화번호</th>
                         <th>키워드</th>
                         <th>작업</th>
                       </tr>
@@ -1185,6 +1212,7 @@ function App() {
                         <tr key={dept.id}>
                           <td className="td-label" style={{color: dept.color, fontWeight: 700}}>{dept.label}</td>
                           <td className="td-key"><code>{dept.key}</code></td>
+                          <td className="td-phone">{dept.phone || '-'}</td>
                           <td className="td-keywords">
                             {(dept.keywords || []).map((k, idx) => (
                               <span key={idx} className="keyword-chip">{k}</span>
@@ -1243,6 +1271,13 @@ function App() {
                   <div className="info-item">
                     <span className="info-label">민원 유형</span>
                     <span className="info-value">{selectedReport.complaint_type === 'field' ? '현장 민원' : '행정/비현장'}</span>
+                  </div>
+                  <div className="info-item">
+                    <span className="info-label">담당 부서</span>
+                    <span className="info-value">
+                      {selectedReport.dept.label}
+                      {selectedReport.dept.phone && ` (${selectedReport.dept.phone})`}
+                    </span>
                   </div>
                 </div>
               </section>

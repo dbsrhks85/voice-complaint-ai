@@ -376,6 +376,7 @@ async def get_departments():
 async def add_department(
     key: str = Form(...),
     label: str = Form(...),
+    phone: str = Form(None),
     color: str = Form(None),
     keywords: str = Form(None), # 쉼표로 구분된 문자열
     tasks: str = Form(None),    # 쉼표로 구분된 문자열
@@ -392,6 +393,7 @@ async def add_department(
         result = await supabase.table("departments").insert({
             "key": key,
             "label": label,
+            "phone": phone,
             "color": color,
             "keywords": keyword_list,
             "tasks": task_list
