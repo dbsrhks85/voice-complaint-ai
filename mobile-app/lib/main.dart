@@ -38,25 +38,26 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   }
 }
 
+
 // ── Cloud Dancer 디자인 시스템 ──────────────────────
 class AppColors {
-  // Cloud Dancer (PANTONE 11-4201 TCX) 기반 팔레트
-  static const Color cloudDancer = Color(0xFFECEAE4); // 메인 배경
-  static const Color cloudSoft = Color(0xFFF5F4F0); // 카드 배경
-  static const Color cloudDeep = Color(0xFFD8D4CB); // 구분선/보더
-  static const Color cloudWarm = Color(0xFFC8C3B5); // 비활성 아이콘
+  // Pure White 기반 팔레트 (캐릭터와 일체감)
+  static const Color cloudDancer = Color(0xFFFFFFFF); // 메인 배경
+  static const Color cloudSoft = Color(0xFFF8F9FA);   // 카드 배경
+  static const Color cloudDeep = Color(0xFFEEEEEE);   // 구분선/보더
+  static const Color cloudWarm = Color(0xFFE0E0E0);   // 비활성 아이콘
 
-  // 포인트 컬러 (민원이 넥타이 & 배지의 스틸 블루)
-  static const Color accentBlue = Color(0xFF3A6EA5); // 주 액션
-  static const Color accentLight = Color(0xFF5B8FCC); // 호버/강조
-  static const Color accentDeep = Color(0xFF254E82); // 헤더
+  // 포인트 컬러 (민원이 넥타이 컬러에 맞춘 블루)
+  static const Color accentBlue = Color(0xFF2C599D);  // 주 액션
+  static const Color accentLight = Color(0xFF4A7CBD); // 호버/강조
+  static const Color accentDeep = Color(0xFF1E3A5F);  // 헤더
 
   // 상태 컬러
-  static const Color recordRed = Color(0xFFE05252); // 녹음 중
-  static const Color successGreen = Color(0xFF4A9E7F); // 성공
-  static const Color textDark = Color(0xFF2C2C2C); // 기본 텍스트
-  static const Color textMid = Color(0xFF6E6B62); // 보조 텍스트
-  static const Color textLight = Color(0xFF9E9B93); // 힌트 텍스트
+  static const Color recordRed = Color(0xFFFF5252);   // 녹음 중
+  static const Color successGreen = Color(0xFF2ECC71); // 성공
+  static const Color textDark = Color(0xFF212121);    // 기본 텍스트
+  static const Color textMid = Color(0xFF757575);     // 보조 텍스트
+  static const Color textLight = Color(0xFFBDBDBD);    // 힌트 텍스트
 }
 
 Future<void> main() async {
@@ -169,6 +170,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   late AnimationController _pulseController;
   late AnimationController _waveController;
   late Animation<double> _pulseAnimation;
+  late Animation<double> _breathAnimation;
   late Animation<double> _waveAnimation;
 
   @override
@@ -183,6 +185,11 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       duration: const Duration(milliseconds: 900),
     )..repeat(reverse: true);
     _pulseAnimation = Tween<double>(begin: 1.0, end: 1.12).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    // 캐릭터 숨쉬기 애니메이션 (더 미세하게)
+    _breathAnimation = Tween<double>(begin: 1.0, end: 1.05).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
@@ -1364,44 +1371,34 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
       body: SafeArea(
         child: Stack(
           children: [
-            // ── Layer 1: 민원이 캐릭터 (배경색 위, UI 아래) ────────
+            // ── Layer 1: 민원이 캐릭터 (녹음 상태에 따라 이미지 전환) ────────
             Positioned.fill(
               child: Align(
-                alignment: const Alignment(0, -0.45), // 화면 위쪽으로 더 올림
+                alignment: const Alignment(0, -0.45),
                 child: AnimatedBuilder(
                   animation: _isRecording
-                      ? _pulseAnimation
+                      ? _breathAnimation
                       : const AlwaysStoppedAnimation(1.0),
                   builder: (context, child) => Transform.scale(
-                    scale: _isRecording ? _pulseAnimation.value : 1.0,
+                    scale: _isRecording ? _breathAnimation.value : 1.0,
                     child: child,
                   ),
                   child: Builder(
                     builder: (context) {
-                      // 화면 너비의 190%를 최대값으로 제한 (2배 크기)
-                      final size = (MediaQuery.of(context).size.width * 1.9)
+                      // 기본 크기 계산
+                      final baseSize = (MediaQuery.of(context).size.width * 1.9)
                           .clamp(0.0, 1120.0);
+                      // 녹음 중에는 캐릭터 사이즈를 조금 줄임 (약 85%)
+                      final size = _isRecording ? baseSize * 0.85 : baseSize;
+
                       return Stack(
                         alignment: Alignment.center,
                         children: [
-                          // 녹음 중 파동 이펙트
-                          if (_isRecording)
-                            AnimatedBuilder(
-                              animation: _waveAnimation,
-                              builder: (context, _) => Container(
-                                width: size + 60 + (_waveAnimation.value * 48),
-                                height: size + 60 + (_waveAnimation.value * 48),
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: AppColors.recordRed.withOpacity(
-                                    0.07 - _waveAnimation.value * 0.05,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          // 민원이 이미지 (화면 너비 기준 4배 크기)
+                          // 녹음 상태에 따라 민원이 이미지 전환
                           Image.asset(
-                            'assets/images/minwoni_clouddancer_sizeup.png',
+                            _isRecording
+                                ? 'assets/images/minwoni_mic.jfif'
+                                : 'assets/images/minwoni.jfif',
                             width: size,
                             height: size,
                             fit: BoxFit.contain,
@@ -1417,9 +1414,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             // ── Layer 2: UI 레이아웃 (헤더 제외, 헤더는 최상단으로 분리) ──────────
             Column(
               children: [
-                const SizedBox(height: 68),
+                const SizedBox(height: 72), // 헤더 아래 공간
+                _buildLocationCard(), // 위치 정보를 최상단으로 이동
                 Expanded(child: _buildCenterContent()),
-                _buildLocationCard(),
                 _buildBottomPanel(),
               ],
             ),
@@ -1593,11 +1590,9 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             child: const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.smart_toy_outlined, color: Colors.white, size: 14),
-                SizedBox(width: 5),
                 Text(
                   AppMessages.brandName,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: Colors.white,
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
@@ -1664,92 +1659,36 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
     return Column(
       mainAxisAlignment: MainAxisAlignment.end, // 하단 정렬 → 캐릭터 발 아래에 위치
       children: [
-        // 캐릭터 이름 배지
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-          decoration: BoxDecoration(
-            color: AppColors.accentBlue,
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.accentBlue.withOpacity(0.25),
-                blurRadius: 8,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.verified_outlined, size: 12, color: Colors.white70),
-              SizedBox(width: 5),
-              Text(
-                AppMessages.mascotName,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              SizedBox(width: 5),
-              Text(
-                AppMessages.mascotSubtitle,
-                style: TextStyle(color: Colors.white70, fontSize: 10),
-              ),
-            ],
-          ),
-        ),
-
         const SizedBox(height: 16),
 
-        // 상태 메시지 카드
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: 32),
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          decoration: BoxDecoration(
-            color: AppColors.cloudSoft.withOpacity(
-              0.92,
-            ), // 살짝 투명 → 캐릭터가 은은하게 비침
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppColors.cloudDeep),
-          ),
-          child: Column(
-            children: [
-              if (_isRecording) ...[
-                // 파형 애니메이션 바
+        // 녹음 중일 때만 파형과 상태 표시 (중앙 박스 제거됨)
+        if (_isRecording)
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 40),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.85),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
                 AnimatedBuilder(
                   animation: _waveAnimation,
                   builder: (context, _) => _buildWaveBars(),
                 ),
                 const SizedBox(height: 10),
-              ],
-              Text(
-                _isRecording
-                    ? AppMessages.listeningMain
-                    : _isSendingSTT
-                    ? AppMessages.sttAnalyzing
-                    : _isSubmitting
-                    ? AppMessages.sttSubmitting
-                    : AppMessages.idleGuide,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: _isRecording
-                      ? AppColors.recordRed
-                      : AppColors.textDark,
-                ),
-              ),
-              if (!_isRecording && !_isSendingSTT && !_isSubmitting)
-                const Padding(
-                  padding: EdgeInsets.only(top: 4),
-                  child: Text(
-                    AppMessages.idleSubGuide,
-                    style: TextStyle(fontSize: 11, color: AppColors.textLight),
+                Text(
+                  AppMessages.listeningMain,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.recordRed,
                   ),
                 ),
-            ],
+              ],
+            ),
           ),
-        ),
       ],
     );
   }
@@ -1847,16 +1786,16 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   // ── 하단 버튼 패널 ─────────────────────────────────────────
   Widget _buildBottomPanel() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 28),
       decoration: BoxDecoration(
         color: AppColors.cloudSoft,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-        border: Border(top: BorderSide(color: AppColors.cloudDeep, width: 1)),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(32)),
+        // 상단 가로 줄 제거
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 12,
-            offset: const Offset(0, -4),
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 15,
+            offset: const Offset(0, -5),
           ),
         ],
       ),
@@ -1865,14 +1804,42 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
         children: [
           // 드래그 핸들
           Container(
-            width: 36,
+            width: 40,
             height: 4,
-            margin: const EdgeInsets.only(bottom: 20),
+            margin: const EdgeInsets.only(bottom: 24),
             decoration: BoxDecoration(
-              color: AppColors.cloudDeep,
+              color: AppColors.cloudDeep.withOpacity(0.5),
               borderRadius: BorderRadius.circular(2),
             ),
           ),
+
+          // 중앙에서 이동해온 안내 문구
+          if (!_isRecording && !_isSendingSTT && !_isSubmitting)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 24),
+              child: Column(
+                children: [
+                  const Text(
+                    AppMessages.idleGuide,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.textDark,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    AppMessages.idleSubGuide,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textMid,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
           // 버튼 행
           Row(
@@ -1928,13 +1895,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
 
           const SizedBox(height: 12),
 
-          // 버튼 설명 레이블
-          Text(
-            _isRecording
-                ? AppMessages.hintTapToStop
-                : AppMessages.hintTapToRecord,
-            style: const TextStyle(fontSize: 11, color: AppColors.textLight),
-          ),
+          // 기존 힌트 텍스트 제거
         ],
       ),
     );
