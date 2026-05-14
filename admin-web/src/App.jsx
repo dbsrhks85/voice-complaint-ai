@@ -12,6 +12,7 @@ import './index.css';
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const ADMIN_API_KEY = import.meta.env.VITE_ADMIN_API_KEY || '';
 const ADMIN_ACCESS_TOKEN_KEY = 'adminAccessToken';
+const DEPARTMENT_FILTER_PAGE_SIZE = 5;
 const adminHeaders = (accessToken) => ({
   ...(ADMIN_API_KEY ? { 'X-Admin-Api-Key': ADMIN_API_KEY } : {}),
   ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
@@ -39,6 +40,23 @@ const TYPE_MAP = {
 };
 
 const getType = (type) => TYPE_MAP[type] ?? TYPE_MAP.field;
+
+// ─────────────────────────────────────────
+// 민원 경과일에 따른 테두리 색상 분류
+// ─────────────────────────────────────────
+const getUrgencyClass = (createdAt) => {
+  if (!createdAt) return '';
+  const createdDate = new Date(createdAt);
+  const now = new Date();
+  
+  // 밀리초를 일(day) 단위로 변환 (당일은 0일)
+  const diffTime = now - createdDate;
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)); 
+  
+  if (diffDays <= 3) return 'urgency-low'; // 초록색 (3일 이하)
+  if (diffDays <= 7) return 'urgency-medium'; // 주황색 (3일 초과 ~ 7일 이하)
+  return 'urgency-high'; // 빨간색 (7일 초과)
+};
 
 
 // ─────────────────────────────────────────
@@ -112,7 +130,6 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all'); // 'all' | 'field' | 'admin'
-  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(false);
   const [selectedReport, setSelectedReport] = useState(null);
   const [rejectingReportId, setRejectingReportId] = useState(null);
@@ -134,6 +151,7 @@ function App() {
   const [reassignKey, setReassignKey] = useState('');
   const [affectedReports, setAffectedReports] = useState([]);
   const [highlightedReportId, setHighlightedReportId] = useState(null);
+  const [departmentFilterPage, setDepartmentFilterPage] = useState(0);
 
   const resetFilters = () => {
     setStatusFilter('pending');
@@ -397,7 +415,10 @@ function App() {
     const counts = {};
 
     processedReports
-      .filter((r) => r.status === statusFilter)
+      .filter((r) => (
+        r.status === statusFilter &&
+        (typeFilter === 'all' || r.complaint_type === typeFilter)
+      ))
       .forEach((r) => {
         counts[r.deptKey] = (counts[r.deptKey] || 0) + 1;
       });
@@ -406,7 +427,56 @@ function App() {
       ...d,
       count: counts[d.key] || 0,
     }));
-  }, [processedReports, departments, statusFilter]);
+  }, [processedReports, departments, statusFilter, typeFilter]);
+
+  const departmentTotalCount = useMemo(() => {
+    return processedReports.filter((r) => (
+      r.status === statusFilter &&
+      (typeFilter === 'all' || r.complaint_type === typeFilter)
+    )).length;
+  }, [processedReports, statusFilter, typeFilter]);
+
+  const departmentPageCount = Math.max(
+    1,
+    Math.ceil(departmentMenus.length / DEPARTMENT_FILTER_PAGE_SIZE)
+  );
+
+  const pagedDepartmentMenus = useMemo(() => {
+    const start = departmentFilterPage * DEPARTMENT_FILTER_PAGE_SIZE;
+    return departmentMenus.slice(start, start + DEPARTMENT_FILTER_PAGE_SIZE);
+  }, [departmentMenus, departmentFilterPage]);
+
+  useEffect(() => {
+    setDepartmentFilterPage((page) => Math.min(page, departmentPageCount - 1));
+  }, [departmentPageCount]);
+
+  const typeTotalCount = useMemo(() => {
+    return processedReports.filter((r) => r.status === statusFilter).length;
+  }, [processedReports, statusFilter]);
+
+  const statusCounts = useMemo(() => {
+    return processedReports.reduce(
+      (counts, report) => {
+        if (Object.prototype.hasOwnProperty.call(counts, report.status)) {
+          counts[report.status] += 1;
+        }
+        return counts;
+      },
+      { pending: 0, processing: 0, completed: 0, rejected: 0 }
+    );
+  }, [processedReports]);
+
+  const typeCounts = useMemo(() => {
+    return processedReports.reduce(
+      (counts, report) => {
+        if (report.status !== statusFilter) return counts;
+        if (report.complaint_type === 'field') counts.field += 1;
+        if (report.complaint_type === 'admin') counts.admin += 1;
+        return counts;
+      },
+      { field: 0, admin: 0 }
+    );
+  }, [processedReports, statusFilter]);
 
   // 필터링된 민원 목록
   const filteredReports = useMemo(() => {
@@ -689,59 +759,67 @@ function App() {
   }
 
   return (
-    <>
+    <div className="app-root">
       {loading && <div className="loading-bar" />}
 
-      {/* 헤더 */}
-      <header className="header">
-        <div className="header-left">
-          <button
-            className="menu-btn"
-            onClick={() => setSidebarOpen((v) => !v)}
+      {/* 글로벌 사이드바 */}
+      <aside className="global-sidebar">
+        <div className="global-sidebar-logo">🏛️</div>
+        <nav className="global-nav">
+          <button 
+            className={`global-nav-item ${activeView === 'dashboard' ? 'active' : ''}`}
+            onClick={() => setActiveView('dashboard')}
           >
-            ☰
+            <span className="nav-icon">📋</span>
+            <span className="nav-label">민원 현황</span>
           </button>
+          <button 
+            className={`global-nav-item ${activeView === 'departments' ? 'active' : ''}`}
+            onClick={() => setActiveView('departments')}
+          >
+            <span className="nav-icon">🏢</span>
+            <span className="nav-label">부서 관리</span>
+          </button>
+          <button 
+            className={`global-nav-item ${activeView === 'stats' ? 'active' : ''}`}
+            onClick={() => setActiveView('stats')}
+          >
+            <span className="nav-icon">📊</span>
+            <span className="nav-label">통계 분석</span>
+          </button>
+        </nav>
+      </aside>
 
-          <div className="header-logo">🏛️</div>
-          <h1 className="header-title">
-            민원 통합 관리 시스템
-          </h1>
-
-          <nav className="header-nav">
-            <button 
-              className={`nav-item ${activeView === 'dashboard' ? 'active' : ''}`}
-              onClick={() => setActiveView('dashboard')}
-            >
-              민원 현황
-            </button>
-            <button 
-              className={`nav-item ${activeView === 'departments' ? 'active' : ''}`}
-              onClick={() => setActiveView('departments')}
-            >
-              부서 관리
-            </button>
-            <button 
-              className={`nav-item ${activeView === 'stats' ? 'active' : ''}`}
-              onClick={() => setActiveView('stats')}
-            >
-              통계 분석
-            </button>
-          </nav>
-        </div>
-
-        <div className="header-stats">
-          <div className="stat-chip total">
-            전체 {reports.length}
+      {/* 우측 본문 영역 */}
+      <div className="app-content">
+        {/* 헤더 */}
+        <header className="header">
+          <div className="header-left">
+            <h1 className="header-title">
+              민원 통합 관리 시스템
+            </h1>
           </div>
 
-          <div className="stat-chip pending">
-            목록 {filteredReports.length}
+          <div className="header-search">
+            <div className="search-input-wrap">
+              <SearchIcon />
+
+              <input
+                className="search-input"
+                placeholder="제목 / 주소 검색"
+                value={searchQuery}
+                onChange={(e) =>
+                  setSearchQuery(e.target.value)
+                }
+              />
+            </div>
           </div>
 
-          <button className="logout-btn" onClick={handleLogout}>
-            로그아웃
-          </button>
-        </div>
+          <div className="header-stats">
+            <button className="logout-btn" onClick={handleLogout}>
+              로그아웃
+            </button>
+          </div>
       </header>
 
       {/* 본문 */}
@@ -845,23 +923,7 @@ function App() {
           </div>
 
           {/* 사이드바 */}
-          <aside className={`sidebar${sidebarOpen ? '' : ' sidebar--hidden'}`}>
-              {/* 검색 */}
-              <div className="sidebar-search">
-                <div className="search-input-wrap">
-                  <SearchIcon />
-
-                  <input
-                    className="search-input"
-                    placeholder="제목 / 주소 검색"
-                    value={searchQuery}
-                    onChange={(e) =>
-                      setSearchQuery(e.target.value)
-                    }
-                  />
-                </div>
-              </div>
-
+          <aside className="sidebar">
               {/* 상태 필터 */}
               <div className="sidebar-status-wrap">
                 <div className="status-menu">
@@ -869,25 +931,25 @@ function App() {
                     className={`status-menu-item ${statusFilter === 'pending' ? 'active' : ''}`}
                     onClick={() => setStatusFilter('pending')}
                   >
-                    접수 중
+                    접수 중 ({statusCounts.pending})
                   </button>
                   <button 
                     className={`status-menu-item ${statusFilter === 'processing' ? 'active' : ''}`}
                     onClick={() => setStatusFilter('processing')}
                   >
-                    처리 중
+                    처리 중 ({statusCounts.processing})
                   </button>
                   <button 
                     className={`status-menu-item ${statusFilter === 'completed' ? 'active' : ''}`}
                     onClick={() => setStatusFilter('completed')}
                   >
-                    처리 완료
+                    처리 완료 ({statusCounts.completed})
                   </button>
                   <button 
                     className={`status-menu-item ${statusFilter === 'rejected' ? 'active' : ''}`}
                     onClick={() => setStatusFilter('rejected')}
                   >
-                    반려됨
+                    반려됨 ({statusCounts.rejected})
                   </button>
                 </div>
               </div>
@@ -898,44 +960,72 @@ function App() {
                   className={`filter-chip ${typeFilter === 'all' ? 'active' : ''}`}
                   onClick={() => setTypeFilter('all')}
                 >
-                  전체 유형
+                  전체 유형 ({typeTotalCount})
                 </button>
                 <button
                   className={`filter-chip ${typeFilter === 'field' ? 'active' : ''}`}
                   onClick={() => setTypeFilter('field')}
                 >
-                  현장 민원
+                  현장 민원 ({typeCounts.field})
                 </button>
                 <button
                   className={`filter-chip ${typeFilter === 'admin' ? 'active' : ''}`}
                   onClick={() => setTypeFilter('admin')}
                 >
-                  비현장/행정
+                  비현장/행정 ({typeCounts.admin})
                 </button>
               </div>
 
               {/* 부서 필터 */}
-              <div className="sidebar-filters">
-                <button
-                  className={`filter-chip ${departmentFilter === 'all' ? 'active' : ''
-                    }`}
-                  onClick={() => setDepartmentFilter('all')}
-                >
-                  전체
-                </button>
-
-                {departmentMenus.map((dept) => (
+              <div className="department-filter">
+                <div className="department-filter-track">
                   <button
-                    key={dept.key}
-                    className={`filter-chip ${departmentFilter === dept.key ? 'active' : ''
+                    className={`filter-chip ${departmentFilter === 'all' ? 'active' : ''
                       }`}
-                    onClick={() =>
-                      setDepartmentFilter(dept.key)
-                    }
+                    onClick={() => setDepartmentFilter('all')}
                   >
-                    {dept.label} ({dept.count})
+                    전체 ({departmentTotalCount})
                   </button>
-                ))}
+
+                  {pagedDepartmentMenus.map((dept) => (
+                    <button
+                      key={dept.key}
+                      className={`filter-chip ${departmentFilter === dept.key ? 'active' : ''
+                        }`}
+                      onClick={() =>
+                        setDepartmentFilter(dept.key)
+                      }
+                    >
+                      {dept.label} ({dept.count})
+                    </button>
+                  ))}
+                </div>
+
+                {departmentPageCount > 1 && (
+                  <div className="department-filter-pager" aria-label="부서 필터 페이지 이동">
+                    <button
+                      className="department-page-btn"
+                      type="button"
+                      disabled={departmentFilterPage === 0}
+                      onClick={() => setDepartmentFilterPage((page) => Math.max(0, page - 1))}
+                      title="이전 부서"
+                    >
+                      ‹
+                    </button>
+                    <span className="department-page-indicator">
+                      {departmentFilterPage + 1}/{departmentPageCount}
+                    </span>
+                    <button
+                      className="department-page-btn"
+                      type="button"
+                      disabled={departmentFilterPage >= departmentPageCount - 1}
+                      onClick={() => setDepartmentFilterPage((page) => Math.min(departmentPageCount - 1, page + 1))}
+                      title="다음 부서"
+                    >
+                      ›
+                    </button>
+                  </div>
+                )}
               </div>
 
 
@@ -943,12 +1033,13 @@ function App() {
               <div className="report-list">
                 {filteredReports.map((report) => {
                   const type = getType(report.complaint_type);
+                  const urgencyClass = getUrgencyClass(report.created_at);
 
                   return (
                     <div
                       key={report.id}
                       id={`report-${report.id}`}
-                      className={`report-item ${highlightedReportId === report.id ? 'highlighted' : ''}`}
+                      className={`report-item ${highlightedReportId === report.id ? 'highlighted' : ''} ${urgencyClass}`}
                       onClick={() => {
                         setHighlightedReportId(report.id);
                         moveToMarker(report.id);
@@ -1007,22 +1098,6 @@ function App() {
                           {report.attachment_urls.length > 1 && ` 외 ${report.attachment_urls.length - 1}건`}
                         </div>
                       )}
-
-                      {/* 업무 */}
-                      <div className="task-box">
-                        <div className="task-title">
-                          처리 업무
-                        </div>
-
-                        {(report.dept.tasks || []).map((task, idx) => (
-                          <div
-                            className="task-row"
-                            key={idx}
-                          >
-                            • {task}
-                          </div>
-                        ))}
-                      </div>
 
                       {/* 하단 버튼 영역 */}
                       <div className="card-actions">
@@ -1418,7 +1493,8 @@ function App() {
           </div>
         </div>
       )}
-    </>
+      </div>
+    </div>
 
   );
 }
