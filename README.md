@@ -54,7 +54,7 @@
 | **개발 기간** | 2026년 3월~5월 |
 | **서비스 대상** | 시민 (모바일 앱) + 담당 공무원 (웹 대시보드) |
 | **플랫폼** | Android / iOS 앱 + 웹 관리자 대시보드 |
-| **최종 배포 브랜치** | `main2` |
+| **최종 배포 브랜치** | `main` |
 
 <br>
 
@@ -295,7 +295,7 @@ auth_refresh_tokens (id, user_id, token_hash, expires_at, revoked_at)
 ## 📁 프로젝트 구조
 
 ```
-2026_capstone/                    (배포 브랜치: main2)
+2026_capstone/                    (배포 브랜치: main)
 │
 ├── backend-server/               # FastAPI 백엔드
 │   ├── main.py                   # 전체 API 엔드포인트 (872줄)
