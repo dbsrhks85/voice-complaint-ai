@@ -186,7 +186,7 @@
                            │ HTTPS
                            ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                FastAPI 백엔드 서버 (AWS EC2)                   │
+│             FastAPI 백엔드 서버 (AWS Lightsail)                 │
 │                                                              │
 │   /auth/*              카카오 OAuth + JWT 토큰 발급/갱신       │
 │   /stt-only            FFmpeg → Whisper STT + GPT 분류       │
@@ -433,16 +433,16 @@ flutter run
 
 ---
 
-##  AWS 배포 구성
+##  AWS Lightsail 배포 구성
 
 ```
-AWS EC2 인스턴스
+AWS Lightsail 인스턴스
   └── FastAPI + Uvicorn
-      ├── 보안 그룹 인바운드: TCP 8000 허용
+      ├── 방화벽 인바운드: TCP 8000 허용
       └── 환경 변수: .env 파일로 관리
 
-Flutter 앱   → config.dart의 kServerUrl을 EC2 퍼블릭 IP로 설정
-관리자 웹    → Vercel / Netlify 또는 EC2 nginx로 서빙
+Flutter 앱   → config.dart의 kServerUrl을 Lightsail 퍼블릭 IP로 설정
+관리자 웹    → Vercel / Netlify 또는 Lightsail nginx로 서빙
 Supabase DB  → 클라우드 PostgreSQL (별도 서버 불필요)
 Firebase     → 클라우드 FCM (별도 서버 불필요)
 ```
