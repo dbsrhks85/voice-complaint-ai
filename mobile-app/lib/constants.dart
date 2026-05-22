@@ -42,7 +42,7 @@ class AppMessages {
   static const String dialogSavedPath     = '💾 JSON 저장 경로';
 
   // ── 헤더 UI ─────────────────────────────────────────────
-  static const String brandName           = 'GOV.AI';
+  static const String brandName           = '스마트민원24';
   static const String analyzingBadge      = '분석 중';
   static const String mascotName          = '민원이';
   static const String mascotSubtitle      = 'AI 민원 도우미';
