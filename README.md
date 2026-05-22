@@ -447,6 +447,9 @@ Supabase DB  → 클라우드 PostgreSQL (별도 서버 불필요)
 Firebase     → 클라우드 FCM (별도 서버 불필요)
 ```
 
+http://3.34.108.5/
+위 주소 통하여 배포함
+
 <br>
 
 ---
