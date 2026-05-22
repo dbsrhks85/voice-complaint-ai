@@ -2,7 +2,7 @@
 
 <img src="mobile-app/assets/images/app_logo.png" alt="민원이 앱 로고" width="120"/>
 
-# 민원이 (Minwoni)
+# 스마트 민원 24
 ### AI 기반 음성 민원 접수 서비스
 
 > **"말 한마디로 끝내는 민원"**  
