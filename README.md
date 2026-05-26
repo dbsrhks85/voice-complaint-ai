@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="mobile-app/assets/images/app_logo.png" alt="민원이 앱 로고" width="120"/>
+<img src="mobile-app/assets/images/app_logo.png" alt="민원이 앱 로고" width="300"/>
 
 # 스마트 민원 24
 ### AI 기반 음성 민원 접수 서비스
@@ -11,9 +11,21 @@
 
 <br>
 
-![Flutter](https://img.shields.io/badge/Flutter-3.11-02569B?style=for-the-badge&logo=flutter&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.135-009688?style=for-the-badge&logo=fastapi&logoColor=white)
-![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)
+
+
+##  팀 소개
+
+| 역할 | 이름 | 담당 역할 |
+|------|------|-----------|
+| 팀&#8288;장 |  박&#8288;성&#8288;민 | AWS 클라우드 인프라 구축(라이트세일), 배포 자동화 파이프라인 설정, 보안 설정, 팀장(일정 관리, 요구사항 조율, 발표) |
+| 팀&#8288;원 |  윤&nbsp;관 | 사용자 앱 프론트엔드 개발, 웹/앱 백엔드 FastAPI 구축, 카카오 맵, Whisper API 및 GPT API 연결, 카카오 로그인 구현, Firebase FCM 구현 및 연결|
+| 팀&#8288;원 |  윤&#8288;여&#8288;산  | Supabase 이용 PostgreSQL DB 구축 및 관리, 관리자 대시보드 웹 프론트엔드 개발, UI/UX 디자인, AI/프롬프트 튜닝 |
+
+## 기술스택
+
+![Flutter](https://img.shields.io/badge/Flutter-02569B?style=for-the-badge&logo=flutter&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-61DAFB?style=for-the-badge&logo=react&logoColor=black)
 ![OpenAI](https://img.shields.io/badge/OpenAI-Whisper%20+%20GPT--4o_mini-412991?style=for-the-badge&logo=openai&logoColor=white)
 ![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)
 ![Firebase](https://img.shields.io/badge/Firebase-FCM-FFCA28?style=for-the-badge&logo=firebase&logoColor=black)
@@ -25,10 +37,6 @@
 ---
 
 ##  프로젝트 개요
-
-<img src="mobile-app/assets/images/minwoni.png" alt="민원이 마스코트" align="right" width="180"/>
-
-**민원이**는 공공 행정 서비스의 디지털 접근성을 높이기 위해 개발된 **AI 기반 음성 민원 자동 접수 시스템**입니다.
 
 ###  문제 인식
 
@@ -47,16 +55,26 @@
 3. **실시간 처리 알림** — 민원이 수락·처리완료·반려될 때 즉시 푸시 알림
 
 <br>
-
-| 구분 | 내용 |
-|------|------|
-| **프로젝트 유형** | 캡스톤 디자인 / 경진대회 출품작 |
-| **개발 기간** | 2026년 3월~5월 |
-| **서비스 대상** | 시민 (모바일 앱) + 담당 공무원 (웹 대시보드) |
-| **플랫폼** | Android / iOS 앱 + 웹 관리자 대시보드 |
-| **최종 배포 브랜치** | `main` |
-
+<table>
+  <tr>
+    <td>
+      <table>
+        <tr><th>구분</th><th>내용</th></tr>
+        <tr><td><strong>프로젝트 유형</strong></td><td>캡스톤 디자인 / 경진대회 출품작</td></tr>
+        <tr><td><strong>개발 기간</strong></td><td>2026년 3월~5월 + 프리캡스톤 </td></tr>
+        <tr><td><strong>서비스 대상</strong></td><td>시민 (모바일 앱) + 담당 공무원 (웹 대시보드)</td></tr>
+        <tr><td><strong>플랫폼</strong></td><td>Android / iOS 앱 + 웹 관리자 대시보드</td></tr>
+        <tr><td><strong>최종 배포 브랜치</strong></td><td><code>main</code></td></tr>
+      </table>
+    </td>
+    <td>
+      <img src="mobile-app/assets/images/minwoni.png" alt="민원이 마스코트" width="900"/>
+    </td>
+  </tr>
+</table>
 <br>
+
+**민원이**는 공공 행정 서비스의 디지털 접근성을 높이기 위해 개발된 **AI 기반 음성 민원 자동 접수 시스템의 마스코트**입니다.
 
 ---
 
@@ -95,7 +113,7 @@
 
 ##  AI 처리 파이프라인
 
-```
+```text
 사용자 음성 입력 (Flutter 앱 내 녹음)
          │
          ▼
@@ -213,7 +231,7 @@
                                        ▼
 ┌───────────────────────────┐    ┌─────────────────────┐
 │  관리자 웹 (React + Vite)  │    │  시민 Flutter App    │
-│  카카오 지도 + 통계 차트    │    │  (알림 수신)         │
+│  카카오 지도 + 통계 차트     │    │  (알림 수신)         │
 │                           │    └─────────────────────┘
 │  ←── SSE 실시간 갱신 ──────┘
 └───────────────────────────┘
@@ -468,10 +486,11 @@ http://3.34.108.5/
 
 <div align="center">
 
-<img src="mobile-app/assets/images/minwoni.png" alt="민원이 마스코트" width="100"/>
+<img src="mobile-app/assets/images/minwoni.png" alt="민원이 마스코트" width="900"/>
+
 
 *"민원이와 함께라면 민원도 쉽게!"*
 
-**2026 캡스톤 디자인**
+**2026 한림대학교 2026 SW캡스톤 디자인**
 
 </div>
